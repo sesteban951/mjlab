@@ -137,3 +137,52 @@ design and abstractions mjlab builds upon.
 Thanks to the MuJoCo Warp team — especially Erik Frey and Taylor Howell — for
 answering our questions, giving helpful feedback, and implementing features
 based on our requests countless times.
+
+# Sergio's Custom Command Hints
+
+## Example Custom Command
+I made a custom environment configuration and RL configuration for the flat velocity tracking task. You can train it with the following command:
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1-Custom --env.scene.num-envs 4096
+```
+
+## Motion Data Parsing Instructions
+The instructions are available at the following link:
+https://mujocolab.github.io/mjlab/main/source/training/motion_imitation.html
+
+### Overview
+#### Create a Motion Registry in WandB
+Make sure you create a motion registry in WandB to store your parsed motions. Name it `Motions` and set the artifact type to `All Types`.
+
+#### Parse and Upload Motion Data
+Your custom motions will be placed inside the `custom_motions`. You just need a `.csv` file containing the full configuration trajectory. Take care in noting you trajectories `fps`.
+
+Here is an example of the command that you run from root to parse and upload the motion to WandB:
+```bash
+MUJOCO_GL=egl uv run -m mjlab.scripts.csv_to_npz \
+    --input-file ./custom_motions/walk1_subject1.csv \
+    --output-name walk1_subject1 \
+    --input-fps 30 \
+    --output-fps 30 \
+    --render True
+```
+This parses the motion using mujoco joint indexing (rather than Isaac Lab breadth first ordering).
+
+In your WandB, this should create a new project called `csv_to_npz` and a new artifact in the `Motions` registry called `walk1_subject1`. You can play the parsed video by going to WandB `csv_to_npz` > `walk1_subject1` > `Files` > `media` or by locally playing it in the root of the repo where it's called `motion.mp4`.
+
+### Training and Evaluation
+Once you have your motion parsed and uploaded to WandB, you can use it for training and evaluation.
+
+Train:
+```bash
+uv run train Mjlab-Tracking-Flat-Unitree-G1 \
+    --registry-name=wandb-registry-Motions/walk1_subject1:latest \
+    --env.scene.num-envs 4096
+```
+
+TODO: update the example command
+Evaluation:
+```bash
+uv run play Mjlab-Tracking-Flat-Unitree-G1 \
+    --wandb-run-path your-org/mjlab/run-id
+```
