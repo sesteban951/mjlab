@@ -138,15 +138,30 @@ Thanks to the MuJoCo Warp team — especially Erik Frey and Taylor Howell — fo
 answering our questions, giving helpful feedback, and implementing features
 based on our requests countless times.
 
+---
+
 # Sergio's Custom Command Hints
 
-## Example Custom Command
-I made a custom environment configuration and RL configuration for the flat velocity tracking task. You can train it with the following command:
+Before you run any commands, ensure you add your WandB API key (https://wandb.ai/authorize) and entity to your `~/.bashrc`:
+```bash
+export WANDB_API_KEY=<your-wandb-api-key>
+export WANDB_ENTITY=<your-wandb-entity>
+```
+
+If you are training on a GPU cluster you can prepend the following traning commands with `CUDA_VISIBLE_DEVICES=#` where `#` is the GPU id you want to train on. You can also specify multiple GPU ids with `CUDA_VISIBLE_DEVICES=#,#`.
+
+## Locmotion Velocity Tracking
+I made a custom environment configuration and RL configuration for the flat velocity tracking task. You can train and evaluate with the following commands:
 ```bash
 uv run train Mjlab-Velocity-Flat-Unitree-G1-Custom --env.scene.num-envs 4096
 ```
+and
+```bash
+uv run play Mjlab-Velocity-Flat-Unitree-G1-Custom \
+    --wandb-run-path sesteban-california-institute-of-technology-caltech/mjlab/bysdsnbu
+```
 
-## Motion Data Parsing Instructions
+## Motion Imitation
 The instructions are available at the following link:
 https://mujocolab.github.io/mjlab/main/source/training/motion_imitation.html
 
@@ -171,18 +186,16 @@ This parses the motion using mujoco joint indexing (rather than Isaac Lab breadt
 In your WandB, this should create a new project called `csv_to_npz` and a new artifact in the `Motions` registry called `walk1_subject1`. You can play the parsed video by going to WandB `csv_to_npz` > `walk1_subject1` > `Files` > `media` or by locally playing it in the root of the repo where it's called `motion.mp4`.
 
 ### Training and Evaluation
-Once you have your motion parsed and uploaded to WandB, you can use it for training and evaluation.
+Once you have your motion parsed and uploaded to WandB, you can use it for training and evaluation. 
 
-Train:
+Train and evaluate a motion tracking:
 ```bash
 uv run train Mjlab-Tracking-Flat-Unitree-G1 \
     --registry-name=wandb-registry-Motions/walk1_subject1:latest \
     --env.scene.num-envs 4096
 ```
-
-TODO: update the example command
-Evaluation:
+and
 ```bash
 uv run play Mjlab-Tracking-Flat-Unitree-G1 \
-    --wandb-run-path your-org/mjlab/run-id
+    --wandb-run-path sesteban-california-institute-of-technology-caltech/mjlab/8ldzx1bk
 ```
