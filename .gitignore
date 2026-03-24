@@ -19,4 +19,5 @@ benchmark_results/
 **/generated/*
 
 # Sergio's custom gitignore
+**/.claude/
 **/*.mp4

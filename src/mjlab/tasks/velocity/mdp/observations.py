@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import math  # Sergio added for custom phase obs
+
 import torch
 
 from mjlab.sensor import ContactSensor
@@ -45,3 +47,35 @@ def foot_contact_forces(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
   assert sensor_data.force is not None
   forces_flat = sensor_data.force.flatten(start_dim=1)  # [B, N*3]
   return torch.sign(forces_flat) * torch.log1p(torch.abs(forces_flat))
+
+
+#########################################################################
+# Sergio's custom observations
+#########################################################################
+
+
+def gait_phase(
+  env: ManagerBasedRlEnv,
+  period: float = 1.0,
+  offset: float = 0.5,
+) -> torch.Tensor:
+  """Sinusoidal gait phase clock for left and right legs.
+
+  Returns:
+    Tensor of shape [B, 4]: [sin(left), cos(left), sin(right), cos(right)].
+  """
+  phase = (env.episode_length_buf * env.step_dt) % period / period
+  phase_right = (phase + offset) % 1.0
+  two_pi = 2.0 * math.pi
+  return torch.stack(
+    [
+      torch.sin(two_pi * phase),
+      torch.cos(two_pi * phase),
+      torch.sin(two_pi * phase_right),
+      torch.cos(two_pi * phase_right),
+    ],
+    dim=-1,
+  )
+
+
+#########################################################################

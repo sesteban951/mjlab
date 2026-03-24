@@ -7,10 +7,12 @@ from .env_cfgs import (
 )
 from .rl_cfg import unitree_g1_ppo_runner_cfg
 
+
 # Sergio's custom config
 from .env_cfgs import (
   unitree_g1_flat_env_cfg_custom,
 )
+
 
 register_mjlab_task(
   task_id="Mjlab-Velocity-Rough-Unitree-G1",
@@ -27,6 +29,7 @@ register_mjlab_task(
   rl_cfg=unitree_g1_ppo_runner_cfg(),
   runner_cls=VelocityOnPolicyRunner,
 )
+
 
 # Sergio's custom config
 register_mjlab_task(

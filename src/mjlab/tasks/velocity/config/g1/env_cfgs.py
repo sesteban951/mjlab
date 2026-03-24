@@ -9,6 +9,9 @@ from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.observation_manager import ObservationTermCfg # Sergio: for custom obs
+from mjlab.managers.scene_entity_config import SceneEntityCfg     # Sergio: for custom reward
+from mjlab.managers.curriculum_manager import CurriculumTermCfg   # Sergio: for overriding curriculum
 from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
@@ -217,7 +220,11 @@ def unitree_g1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
+#########################################################################
 # Sergio's custom config
+#########################################################################
+
+
 def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 flat terrain velocity configuration."""
   cfg = unitree_g1_rough_env_cfg(play=play)
@@ -239,11 +246,59 @@ def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
   del cfg.observations["actor"].terms["height_scan"]
   del cfg.observations["critic"].terms["height_scan"]
 
-  # Remove base_lin_vel from actor — not available on real hardware.
+  # Sergio: Remove base_lin_vel from actor — not available on real hardware.
   del cfg.observations["actor"].terms["base_lin_vel"]
+
+  # Sergio: Add gait phase clock to actor and critic observations.
+  desired_period = 1.0  # seconds per gait cycle
+  cfg.observations["actor"].terms["gait_phase"] = ObservationTermCfg(
+    func=mdp.gait_phase,
+    params={"period": desired_period, "offset": 0.5},
+  )
+  cfg.observations["critic"].terms["gait_phase"] = ObservationTermCfg(
+    func=mdp.gait_phase,
+    params={"period": desired_period, "offset": 0.5},
+  )
+
+  # Sergio: Reward flat foot contact during stance.
+  cfg.rewards["flat_foot"] = RewardTermCfg(
+    func=mdp.flat_foot_contact,
+    weight=-0.5,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "asset_cfg": SceneEntityCfg(
+        "robot",
+        body_names=("left_ankle_roll_link", "right_ankle_roll_link"),
+      ),
+    },
+  )
+
+  # Sergio: Reward correct foot contact timing with gait phase.
+  cfg.rewards["gait_phase_contact"] = RewardTermCfg(
+    func=mdp.gait_phase_contact,
+    weight=0.15,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "period": desired_period,
+      "offset": 0.5,
+    },
+  )
 
   # Disable terrain curriculum (not present in play mode since rough clears all).
   cfg.curriculum.pop("terrain_levels", None)
+
+  # Sergio: Override velocity curriculum for reasonable walking speeds.
+  cfg.curriculum["command_vel"] = CurriculumTermCfg(
+    func=mdp.commands_vel,
+    params={
+      "command_name": "twist",
+      "velocity_stages": [
+        {"step": 0, "lin_vel_x": (-0.5, 0.5), "ang_vel_z": (-0.25, 0.25)},
+        {"step": 5000 * 24, "lin_vel_x": (-1.0, 1.0), "ang_vel_z": (-0.50, 0.50)},
+        {"step": 10000 * 24, "lin_vel_x": (-1.5, 1.5), "ang_vel_z": (-0.75, 0.75)},
+      ],
+    },
+  )
 
   if play:
     twist_cmd = cfg.commands["twist"]
@@ -253,3 +308,6 @@ def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
     twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
 
   return cfg
+
+
+#########################################################################

@@ -190,12 +190,12 @@ Once you have your motion parsed and uploaded to WandB, you can use it for train
 
 Train and evaluate a motion tracking:
 ```bash
-uv run train Mjlab-Tracking-Flat-Unitree-G1 \
+uv run train Mjlab-Tracking-Flat-Unitree-G1-Custom \
     --registry-name=wandb-registry-Motions/walk1_subject1:latest \
     --env.scene.num-envs 4096
 ```
 and
 ```bash
-uv run play Mjlab-Tracking-Flat-Unitree-G1 \
+uv run play Mjlab-Tracking-Flat-Unitree-G1-Custom \
     --wandb-run-path sesteban-california-institute-of-technology-caltech/mjlab/8ldzx1bk
 ```

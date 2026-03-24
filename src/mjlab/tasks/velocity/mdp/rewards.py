@@ -391,3 +391,81 @@ class variable_posture:
     error_squared = torch.square(current_joint_pos - desired_joint_pos)
 
     return torch.exp(-torch.mean(error_squared / (std**2), dim=1))
+
+
+#########################################################################
+# Sergio's custom rewards
+#########################################################################
+
+
+def flat_foot_contact(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Reward flat foot orientation during stance (contact).
+
+  Penalizes foot tilt (non-zero projected gravity xy components) when
+  the foot is on the ground. This encourages the whole sole to contact
+  the ground rather than just the heel.
+
+  asset_cfg.body_ids should point to the foot bodies
+  (e.g. left_ankle_roll_link, right_ankle_roll_link).
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  in_contact = (contact_sensor.data.found > 0).float()  # [B, N]
+
+  # Get foot body orientations.
+  foot_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids, :]  # [B, N, 4]
+  gravity_w = asset.data.gravity_vec_w  # [3]
+  # Project gravity into each foot frame.
+  gravity_w_exp = gravity_w.expand(
+    foot_quat_w.shape[0], foot_quat_w.shape[1], 3
+  )  # [B, N, 3]
+  foot_quat_flat = foot_quat_w.reshape(-1, 4)  # [B*N, 4]
+  gravity_flat = gravity_w_exp.reshape(-1, 3)  # [B*N, 3]
+  proj_grav = quat_apply_inverse(foot_quat_flat, gravity_flat)  # [B*N, 3]
+  proj_grav = proj_grav.reshape(
+    foot_quat_w.shape[0], foot_quat_w.shape[1], 3
+  )  # [B, N, 3]
+
+  # xy components of projected gravity = tilt error.
+  tilt_error = torch.sum(torch.square(proj_grav[:, :, :2]), dim=-1)  # [B, N]
+  # Only penalize when foot is in contact.
+  cost = torch.sum(tilt_error * in_contact, dim=1)  # [B]
+  return cost
+
+
+def gait_phase_contact(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  period: float = 1.0,
+  offset: float = 0.5,
+  stance_ratio: float = 0.55,
+) -> torch.Tensor:
+  """Reward feet contacting the ground in sync with a gait phase clock.
+
+  Computes a periodic phase for left and right legs. During the stance
+  portion of each leg's phase (phase < stance_ratio), the foot should be
+  in contact; during swing it should be in the air. Returns +1 per foot
+  when contact matches the expected phase.
+
+  The contact sensor must have exactly 2 feet ordered [left, right].
+  """
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  in_contact = contact_sensor.data.found > 0  # [B, N]
+
+  phase = (env.episode_length_buf * env.step_dt) % period / period
+  phase_right = (phase + offset) % 1.0
+  leg_phase = torch.stack([phase, phase_right], dim=-1)  # [B, 2]
+
+  expected_stance = leg_phase < stance_ratio  # [B, 2]
+  # +1 when contact matches expectation, 0 otherwise.
+  match = ~(in_contact ^ expected_stance)  # [B, 2]
+  return match.float().sum(dim=1)  # [B]
+
+
+#########################################################################
