@@ -419,10 +419,10 @@ def flat_foot_contact(
 
   # Get foot body orientations.
   foot_quat_w = asset.data.body_link_quat_w[:, asset_cfg.body_ids, :]  # [B, N, 4]
-  gravity_w = asset.data.gravity_vec_w  # [3]
+  gravity_w = asset.data.gravity_vec_w  # [B, 3]
   # Project gravity into each foot frame.
-  gravity_w_exp = gravity_w.expand(
-    foot_quat_w.shape[0], foot_quat_w.shape[1], 3
+  gravity_w_exp = gravity_w.unsqueeze(1).expand(
+    -1, foot_quat_w.shape[1], 3
   )  # [B, N, 3]
   foot_quat_flat = foot_quat_w.reshape(-1, 4)  # [B*N, 4]
   gravity_flat = gravity_w_exp.reshape(-1, 3)  # [B*N, 3]
