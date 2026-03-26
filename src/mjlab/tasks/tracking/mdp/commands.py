@@ -31,11 +31,20 @@ _DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
 
 class MotionLoader:
   def __init__(
-    self, motion_file: str, body_indexes: torch.Tensor, device: str = "cpu"
+    self,
+    motion_file: str,
+    body_indexes: torch.Tensor,
+    joint_indexes: torch.Tensor | None = None,
+    device: str = "cpu",
   ) -> None:
     data = np.load(motion_file)
-    self.joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
-    self.joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
+    joint_pos = torch.tensor(data["joint_pos"], dtype=torch.float32, device=device)
+    joint_vel = torch.tensor(data["joint_vel"], dtype=torch.float32, device=device)
+    if joint_indexes is not None:
+      joint_pos = joint_pos[:, joint_indexes]
+      joint_vel = joint_vel[:, joint_indexes]
+    self.joint_pos = joint_pos
+    self.joint_vel = joint_vel
     self._body_pos_w = torch.tensor(
       data["body_pos_w"], dtype=torch.float32, device=device
     )
@@ -74,8 +83,20 @@ class MotionCommand(CommandTerm):
       device=self.device,
     )
 
+    # Compute joint index mapping when motion has different DOFs than robot.
+    joint_indexes: torch.Tensor | None = None
+    if cfg.motion_joint_names is not None:
+      robot_joint_set = set(self.robot.joint_names)
+      indices = [
+        i for i, name in enumerate(cfg.motion_joint_names) if name in robot_joint_set
+      ]
+      joint_indexes = torch.tensor(indices, dtype=torch.long, device=self.device)
+
     self.motion = MotionLoader(
-      self.cfg.motion_file, self.body_indexes, device=self.device
+      self.cfg.motion_file,
+      self.body_indexes,
+      joint_indexes=joint_indexes,
+      device=self.device,
     )
     self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.body_pos_relative_w = torch.zeros(
@@ -476,6 +497,7 @@ class MotionCommandCfg(CommandTermCfg):
   anchor_body_name: str
   body_names: tuple[str, ...]
   entity_name: str
+  motion_joint_names: tuple[str, ...] | None = None
   pose_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   velocity_range: dict[str, tuple[float, float]] = field(default_factory=dict)
   joint_position_range: tuple[float, float] = (-0.52, 0.52)

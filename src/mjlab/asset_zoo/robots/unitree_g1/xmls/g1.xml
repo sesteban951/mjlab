@@ -183,12 +183,12 @@
         <geom class="visual" mesh="waist_yaw_link"/>
         <body name="waist_roll_link" pos="-0.0039635 0 0.044">
           <inertial pos="0 2.3e-05 0" quat="0.5 0.5 -0.5 0.5" mass="0.086" diaginertia="8.245e-06 7.079e-06 6.339e-06"/>
-          <!-- <joint name="waist_roll_joint" axis="1 0 0" range="-0.52 0.52"/> -->
+          <joint name="waist_roll_joint" axis="1 0 0" range="-0.52 0.52"/>
           <geom class="visual" mesh="waist_roll_link"/>
           <body name="torso_link">
             <inertial pos="0.00203158 0.000339683 0.184568" quat="0.999803 -6.03319e-05 0.0198256 0.00131986"
               mass="7.818" diaginertia="0.121847 0.109825 0.0273735"/>
-            <!-- <joint name="waist_pitch_joint" axis="0 1 0" range="-0.52 0.52"/> -->
+            <joint name="waist_pitch_joint" axis="0 1 0" range="-0.52 0.52"/>
             <geom class="visual" mesh="torso_link"/>
             <geom class="visual" pos="0.0039635 0 -0.044" quat="1 0 0 0" material="black" mesh="logo_link"/>
             <geom class="visual" pos="0.0039635 0 -0.044" material="black" mesh="head_link"/>
@@ -227,13 +227,13 @@
                       <body name="left_wrist_pitch_link" pos="0.038 0 0">
                         <inertial pos="0.0229999 -0.00111685 -0.00111658" quat="0.249998 0.661363 0.293036 0.643608"
                           mass="0.48405" diaginertia="0.000430353 0.000429873 0.000164648"/>
-                        <!-- <joint name="left_wrist_pitch_joint" axis="0 1 0" range="-1.61443 1.61443"/> -->
+                        <joint name="left_wrist_pitch_joint" axis="0 1 0" range="-1.61443 1.61443"/>
                         <geom class="visual" mesh="left_wrist_pitch_link"/>
                         <geom name="left_wrist_collision" class="collision" size="0.035" fromto="-0.01 0 0 0.06 0 0"/>
                         <body name="left_wrist_yaw_link" pos="0.046 0 0">
                           <inertial pos="0.0708244 0.000191745 0.00161742" quat="0.510571 0.526295 0.468078 0.493188"
                             mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
-                          <!-- <joint name="left_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/> -->
+                          <joint name="left_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
                           <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"
                             material="black"/>
@@ -278,13 +278,13 @@
                       <body name="right_wrist_pitch_link" pos="0.038 0 0">
                         <inertial pos="0.0229999 0.00111685 -0.00111658" quat="0.643608 0.293036 0.661363 0.249998"
                           mass="0.48405" diaginertia="0.000430353 0.000429873 0.000164648"/>
-                        <!-- <joint name="right_wrist_pitch_joint" axis="0 1 0" range="-1.61443 1.61443"/> -->
+                        <joint name="right_wrist_pitch_joint" axis="0 1 0" range="-1.61443 1.61443"/>
                         <geom class="visual" mesh="right_wrist_pitch_link"/>
                         <geom name="right_wrist_collision" class="collision" size="0.035" fromto="-0.01 0 0 0.06 0 0"/>
                         <body name="right_wrist_yaw_link" pos="0.046 0 0">
                           <inertial pos="0.0708244 -0.000191745 0.00161742" quat="0.493188 0.468078 0.526295 0.510571"
                             mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
-                          <!-- <joint name="right_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/> -->
+                          <joint name="right_wrist_yaw_joint" axis="0 0 1" range="-1.61443 1.61443"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
                           <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"
                             material="black"/>

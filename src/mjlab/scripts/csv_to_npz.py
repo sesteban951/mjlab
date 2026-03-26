@@ -318,11 +318,15 @@ def run_sim(
         logged_artifact = run.log_artifact(
           artifact_or_path="/tmp/motion.npz", name=COLLECTION, type=REGISTRY
         )
-        run.link_artifact(
-          artifact=logged_artifact,
-          target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
-        )
-        print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+        try:
+          run.link_artifact(
+            artifact=logged_artifact,
+            target_path=f"wandb-registry-{REGISTRY}/{COLLECTION}",
+          )
+          print(f"[INFO]: Motion saved to wandb registry: {REGISTRY}/{COLLECTION}")
+        except Exception as e:
+          print(f"[WARN]: Could not link artifact to registry: {e}")
+          print("[INFO]: Artifact was still logged to the run.")
 
         if render:
           import mediapy as media

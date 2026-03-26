@@ -202,6 +202,45 @@ def unitree_g1_flat_tracking_env_cfg_custom(
 # 23-DOF variants.
 ##
 
+# Joint ordering in 29-DOF motion files, used to map to 23-DOF robot joints.
+G1_29DOF_JOINT_NAMES = (
+  "left_hip_pitch_joint",
+  "left_hip_roll_joint",
+  "left_hip_yaw_joint",
+  "left_knee_joint",
+  "left_ankle_pitch_joint",
+  "left_ankle_roll_joint",
+  "right_hip_pitch_joint",
+  "right_hip_roll_joint",
+  "right_hip_yaw_joint",
+  "right_knee_joint",
+  "right_ankle_pitch_joint",
+  "right_ankle_roll_joint",
+  "waist_yaw_joint",
+  "waist_roll_joint",
+  "waist_pitch_joint",
+  "left_shoulder_pitch_joint",
+  "left_shoulder_roll_joint",
+  "left_shoulder_yaw_joint",
+  "left_elbow_joint",
+  "left_wrist_roll_joint",
+  "left_wrist_pitch_joint",
+  "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint",
+  "right_shoulder_roll_joint",
+  "right_shoulder_yaw_joint",
+  "right_elbow_joint",
+  "right_wrist_roll_joint",
+  "right_wrist_pitch_joint",
+  "right_wrist_yaw_joint",
+)
+
+
+def _set_23dof_motion_joint_names(cfg: ManagerBasedRlEnvCfg) -> None:
+  motion_cmd = cfg.commands["motion"]
+  assert isinstance(motion_cmd, MotionCommandCfg)
+  motion_cmd.motion_joint_names = G1_29DOF_JOINT_NAMES
+
 
 def unitree_g1_flat_tracking_env_cfg_23dof(
   has_state_estimation: bool = True,
@@ -215,6 +254,7 @@ def unitree_g1_flat_tracking_env_cfg_23dof(
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
   joint_pos_action.scale = G1_23DOF_ACTION_SCALE
+  _set_23dof_motion_joint_names(cfg)
   return cfg
 
 
@@ -230,4 +270,5 @@ def unitree_g1_flat_tracking_env_cfg_custom_23dof(
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
   joint_pos_action.scale = G1_23DOF_ACTION_SCALE
+  _set_23dof_motion_joint_names(cfg)
   return cfg
