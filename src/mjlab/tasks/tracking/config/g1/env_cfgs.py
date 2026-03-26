@@ -1,7 +1,9 @@
 """Unitree G1 flat tracking environment configurations."""
 
 from mjlab.asset_zoo.robots import (
+  G1_23DOF_ACTION_SCALE,
   G1_ACTION_SCALE,
+  get_g1_23dof_robot_cfg,
   get_g1_robot_cfg,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -196,4 +198,36 @@ def unitree_g1_flat_tracking_env_cfg_custom(
   return cfg
 
 
-#########################################################################
+##
+# 23-DOF variants.
+##
+
+
+def unitree_g1_flat_tracking_env_cfg_23dof(
+  has_state_estimation: bool = True,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 23-DOF flat terrain tracking configuration."""
+  cfg = unitree_g1_flat_tracking_env_cfg(
+    has_state_estimation=has_state_estimation, play=play
+  )
+  cfg.scene.entities = {"robot": get_g1_23dof_robot_cfg()}
+  joint_pos_action = cfg.actions["joint_pos"]
+  assert isinstance(joint_pos_action, JointPositionActionCfg)
+  joint_pos_action.scale = G1_23DOF_ACTION_SCALE
+  return cfg
+
+
+def unitree_g1_flat_tracking_env_cfg_custom_23dof(
+  has_state_estimation: bool = False,
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 23-DOF flat terrain custom tracking configuration."""
+  cfg = unitree_g1_flat_tracking_env_cfg_custom(
+    has_state_estimation=has_state_estimation, play=play
+  )
+  cfg.scene.entities = {"robot": get_g1_23dof_robot_cfg()}
+  joint_pos_action = cfg.actions["joint_pos"]
+  assert isinstance(joint_pos_action, JointPositionActionCfg)
+  joint_pos_action.scale = G1_23DOF_ACTION_SCALE
+  return cfg

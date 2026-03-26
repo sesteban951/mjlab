@@ -4,9 +4,14 @@ from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 from .env_cfgs import unitree_g1_flat_tracking_env_cfg
 from .rl_cfg import unitree_g1_tracking_ppo_runner_cfg
 
-
 # Sergio's custom config
 from .env_cfgs import unitree_g1_flat_tracking_env_cfg_custom
+
+# 23-DOF variants
+from .env_cfgs import (
+  unitree_g1_flat_tracking_env_cfg_23dof,
+  unitree_g1_flat_tracking_env_cfg_custom_23dof,
+)
 
 
 register_mjlab_task(
@@ -25,12 +30,30 @@ register_mjlab_task(
   runner_cls=MotionTrackingOnPolicyRunner,
 )
 
-
 # Sergio's custom config
 register_mjlab_task(
   task_id="Mjlab-Tracking-Flat-Unitree-G1-Custom",
   env_cfg=unitree_g1_flat_tracking_env_cfg_custom(has_state_estimation=False),
   play_env_cfg=unitree_g1_flat_tracking_env_cfg_custom(
+    has_state_estimation=False, play=True
+  ),
+  rl_cfg=unitree_g1_tracking_ppo_runner_cfg(),
+  runner_cls=MotionTrackingOnPolicyRunner,
+)
+
+# 23-DOF variants
+register_mjlab_task(
+  task_id="Mjlab-Tracking-Flat-Unitree-G1-23dof",
+  env_cfg=unitree_g1_flat_tracking_env_cfg_23dof(),
+  play_env_cfg=unitree_g1_flat_tracking_env_cfg_23dof(play=True),
+  rl_cfg=unitree_g1_tracking_ppo_runner_cfg(),
+  runner_cls=MotionTrackingOnPolicyRunner,
+)
+
+register_mjlab_task(
+  task_id="Mjlab-Tracking-Flat-Unitree-G1-Custom-23dof",
+  env_cfg=unitree_g1_flat_tracking_env_cfg_custom_23dof(has_state_estimation=False),
+  play_env_cfg=unitree_g1_flat_tracking_env_cfg_custom_23dof(
     has_state_estimation=False, play=True
   ),
   rl_cfg=unitree_g1_tracking_ppo_runner_cfg(),

@@ -295,6 +295,54 @@ for a in G1_ARTICULATION.actuators:
     G1_ACTION_SCALE[n] = 0.25 * e / s
 
 
+##
+# 23-DOF variant (no waist pitch/roll, no wrist pitch/yaw).
+##
+
+G1_23DOF_XML: Path = (
+  MJLAB_SRC_PATH / "asset_zoo" / "robots" / "unitree_g1" / "xmls" / "g1_23dof.xml"
+)
+assert G1_23DOF_XML.exists()
+
+
+def get_23dof_spec() -> mujoco.MjSpec:
+  spec = mujoco.MjSpec.from_file(str(G1_23DOF_XML))
+  spec.assets = get_assets(spec.meshdir)
+  return spec
+
+
+G1_23DOF_ARTICULATION = EntityArticulationInfoCfg(
+  actuators=(
+    G1_ACTUATOR_5020,
+    G1_ACTUATOR_7520_14,
+    G1_ACTUATOR_7520_22,
+    G1_ACTUATOR_ANKLE,
+  ),
+  soft_joint_pos_limit_factor=0.9,
+)
+
+
+def get_g1_23dof_robot_cfg() -> EntityCfg:
+  """Get a fresh G1 23-DOF robot configuration instance."""
+  return EntityCfg(
+    init_state=KNEES_BENT_KEYFRAME,
+    collisions=(FULL_COLLISION,),
+    spec_fn=get_23dof_spec,
+    articulation=G1_23DOF_ARTICULATION,
+  )
+
+
+G1_23DOF_ACTION_SCALE: dict[str, float] = {}
+for a in G1_23DOF_ARTICULATION.actuators:
+  assert isinstance(a, BuiltinPositionActuatorCfg)
+  e = a.effort_limit
+  s = a.stiffness
+  names = a.target_names_expr
+  assert e is not None
+  for n in names:
+    G1_23DOF_ACTION_SCALE[n] = 0.25 * e / s
+
+
 if __name__ == "__main__":
   import mujoco.viewer as viewer
 

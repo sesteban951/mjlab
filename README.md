@@ -161,6 +161,36 @@ uv run play Mjlab-Velocity-Flat-Unitree-G1-Custom \
     --wandb-run-path sesteban-california-institute-of-technology-caltech/mjlab/bysdsnbu
 ```
 
+## 23-DOF Variant (No Wrist / Waist Pitch & Roll)
+
+A reduced 23-DOF G1 model is available that removes the waist pitch/roll and wrist pitch/yaw joints (keeps wrist roll). This is useful when you don't need upper-body dexterity and want a smaller action space.
+
+The 23-DOF tasks mirror the full-DOF tasks with a `-23dof` suffix:
+
+Train and evaluate velocity tracking:
+```bash
+uv run train Mjlab-Velocity-Flat-Unitree-G1-Custom-23dof --env.scene.num-envs 4096
+```
+```bash
+uv run play Mjlab-Velocity-Flat-Unitree-G1-Custom-23dof \
+    --wandb-run-path <your-wandb-entity>/mjlab/<run-id>
+```
+
+Train and evaluate motion imitation:
+```bash
+uv run train Mjlab-Tracking-Flat-Unitree-G1-Custom-23dof \
+    --registry-name=wandb-registry-Motions/walk1_subject1:latest \
+    --env.scene.num-envs 4096
+```
+```bash
+uv run play Mjlab-Tracking-Flat-Unitree-G1-Custom-23dof \
+    --wandb-run-path <your-wandb-entity>/mjlab/<run-id>
+```
+
+All other available 23-DOF task IDs:
+- `Mjlab-Velocity-Flat-Unitree-G1-23dof`
+- `Mjlab-Tracking-Flat-Unitree-G1-23dof`
+
 ## Motion Imitation
 The instructions are available at the following link:
 https://mujocolab.github.io/mjlab/main/source/training/motion_imitation.html

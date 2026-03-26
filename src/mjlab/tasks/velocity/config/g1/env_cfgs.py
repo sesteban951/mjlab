@@ -1,7 +1,9 @@
 """Unitree G1 velocity environment configurations."""
 
 from mjlab.asset_zoo.robots import (
+  G1_23DOF_ACTION_SCALE,
   G1_ACTION_SCALE,
+  get_g1_23dof_robot_cfg,
   get_g1_robot_cfg,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -9,9 +11,15 @@ from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.managers.observation_manager import ObservationTermCfg # Sergio: for custom obs
-from mjlab.managers.scene_entity_config import SceneEntityCfg     # Sergio: for custom reward
-from mjlab.managers.curriculum_manager import CurriculumTermCfg   # Sergio: for overriding curriculum
+from mjlab.managers.observation_manager import (
+  ObservationTermCfg,
+)  # Sergio: for custom obs
+from mjlab.managers.scene_entity_config import (
+  SceneEntityCfg,
+)  # Sergio: for custom reward
+from mjlab.managers.curriculum_manager import (
+  CurriculumTermCfg,
+)  # Sergio: for overriding curriculum
 from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
@@ -220,6 +228,25 @@ def unitree_g1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
+def _strip_pose_std_for_23dof(cfg: ManagerBasedRlEnvCfg) -> None:
+  """Remove waist roll/pitch entries from pose reward std dicts."""
+  removed = {r".*waist_roll.*", r".*waist_pitch.*"}
+  for key in ("std_walking", "std_running"):
+    old = cfg.rewards["pose"].params[key]
+    cfg.rewards["pose"].params[key] = {k: v for k, v in old.items() if k not in removed}
+
+
+def unitree_g1_flat_env_cfg_23dof(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 23-DOF flat terrain velocity configuration."""
+  cfg = unitree_g1_flat_env_cfg(play=play)
+  cfg.scene.entities = {"robot": get_g1_23dof_robot_cfg()}
+  joint_pos_action = cfg.actions["joint_pos"]
+  assert isinstance(joint_pos_action, JointPositionActionCfg)
+  joint_pos_action.scale = G1_23DOF_ACTION_SCALE
+  _strip_pose_std_for_23dof(cfg)
+  return cfg
+
+
 #########################################################################
 # Sergio's custom config
 #########################################################################
@@ -310,4 +337,14 @@ def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
-#########################################################################
+def unitree_g1_flat_env_cfg_custom_23dof(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """Create Unitree G1 23-DOF flat terrain custom velocity configuration."""
+  cfg = unitree_g1_flat_env_cfg_custom(play=play)
+  cfg.scene.entities = {"robot": get_g1_23dof_robot_cfg()}
+  joint_pos_action = cfg.actions["joint_pos"]
+  assert isinstance(joint_pos_action, JointPositionActionCfg)
+  joint_pos_action.scale = G1_23DOF_ACTION_SCALE
+  _strip_pose_std_for_23dof(cfg)
+  return cfg

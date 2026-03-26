@@ -86,7 +86,7 @@ class RslRlBaseRunnerCfg:
   obs_groups: dict[str, tuple[str, ...]] = field(
     default_factory=lambda: {"actor": ("actor",), "critic": ("critic",)},
   )
-  save_interval: int = 50
+  save_interval: int = 500
   """The number of iterations between saves."""
   experiment_name: str = "exp1"
   """Directory name used to group runs under
