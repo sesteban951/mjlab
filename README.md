@@ -178,7 +178,7 @@ MUJOCO_GL=egl uv run -m mjlab.scripts.csv_to_npz \
     --input-file ./custom_motions/walk1_subject1.csv \
     --output-name walk1_subject1 \
     --input-fps 30 \
-    --output-fps 30 \
+    --output-fps 50 \
     --render True
 ```
 This parses the motion using mujoco joint indexing (rather than Isaac Lab breadth first ordering).
