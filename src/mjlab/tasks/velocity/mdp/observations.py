@@ -50,7 +50,7 @@ def foot_contact_forces(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
 
 
 #########################################################################
-# Sergio's custom observations
+# CUSTIOM OBSERVATIONS
 #########################################################################
 
 
@@ -77,5 +77,3 @@ def gait_phase(
     dim=-1,
   )
 
-
-#########################################################################

@@ -394,7 +394,7 @@ class variable_posture:
 
 
 #########################################################################
-# Sergio's custom rewards
+# CUSTOM REWARDS
 #########################################################################
 
 
@@ -467,5 +467,3 @@ def gait_phase_contact(
   match = ~(in_contact ^ expected_stance)  # [B, 2]
   return match.float().sum(dim=1)  # [B]
 
-
-#########################################################################
