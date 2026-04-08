@@ -1,13 +1,12 @@
 from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 
-from .env_cfgs import unitree_g1_flat_tracking_env_cfg
-from .rl_cfg import unitree_g1_tracking_ppo_runner_cfg
-
-
 # Sergio's custom config
-from .env_cfgs import unitree_g1_flat_tracking_env_cfg_custom
-
+from .env_cfgs import (
+  unitree_g1_flat_tracking_env_cfg,
+  unitree_g1_flat_tracking_env_cfg_custom,
+)
+from .rl_cfg import unitree_g1_tracking_ppo_runner_cfg
 
 register_mjlab_task(
   task_id="Mjlab-Tracking-Flat-Unitree-G1",
@@ -26,7 +25,11 @@ register_mjlab_task(
 )
 
 
-# Sergio's custom config
+#########################################################################
+# CUSTOM CONFIGS
+#########################################################################
+
+
 register_mjlab_task(
   task_id="Mjlab-Tracking-Flat-Unitree-G1-Custom",
   env_cfg=unitree_g1_flat_tracking_env_cfg_custom(has_state_estimation=False),

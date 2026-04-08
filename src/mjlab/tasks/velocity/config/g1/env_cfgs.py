@@ -7,11 +7,12 @@ from mjlab.asset_zoo.robots import (
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.managers.observation_manager import ObservationTermCfg # Sergio: for custom obs
-from mjlab.managers.scene_entity_config import SceneEntityCfg     # Sergio: for custom reward
-from mjlab.managers.curriculum_manager import CurriculumTermCfg   # Sergio: for overriding curriculum
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
+from mjlab.managers.observation_manager import ObservationTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import (
   ContactMatch,
   ContactSensorCfg,
@@ -221,11 +222,9 @@ def unitree_g1_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
 
 #########################################################################
-# CUSTOM CONFIGS
+# VANILLA FLAT CONFIG
 #########################################################################
 
-
-############################ VANILLA FLAT ###############################
 
 def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
   """Create Unitree G1 flat terrain velocity configuration."""
@@ -293,5 +292,187 @@ def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
   return cfg
 
 
-############################ UNITREE_RL_GYM ###############################
+#########################################################################
+# UNITREE RL GYM FLAT CONFIG
+#########################################################################
 
+
+def unitree_g1_flat_env_cfg_unitree_rl_gym(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
+  """G1 flat velocity config matching unitree_rl_gym rewards/terminations.
+
+  Closely replicates the observation, reward, termination, and command
+  structure from unitree_rl_gym's G1RoughCfg on flat terrain.
+  """
+  cfg = unitree_g1_flat_env_cfg(play=play)
+
+  site_names = ("left_foot", "right_foot")
+  gait_period = 0.8
+  gait_offset = 0.5
+
+  ##
+  # Observations
+  ##
+
+  # Actor: remove base_lin_vel (not available on hardware).
+  del cfg.observations["actor"].terms["base_lin_vel"]
+
+  # Add single-leg gait phase clock to actor and critic (2 values).
+  for group in ("actor", "critic"):
+    cfg.observations[group].terms["gait_phase"] = ObservationTermCfg(
+      func=mdp.phase,
+      params={"period": gait_period},
+    )
+
+  ##
+  # Rewards — match unitree_rl_gym G1 scales and functions.
+  # All weights are raw (the framework handles dt multiplication).
+  ##
+
+  cfg.rewards = {
+    "tracking_lin_vel": RewardTermCfg(
+      func=mdp.track_linear_velocity,
+      weight=1.0,
+      params={"command_name": "twist", "std": 0.5},
+    ),
+    "tracking_ang_vel": RewardTermCfg(
+      func=mdp.track_angular_velocity,
+      weight=0.5,
+      params={"command_name": "twist", "std": 0.5},
+    ),
+    "lin_vel_z": RewardTermCfg(
+      func=mdp.reward_lin_vel_z,
+      weight=-2.0,
+    ),
+    "ang_vel_xy": RewardTermCfg(
+      func=mdp.reward_ang_vel_xy,
+      weight=-0.05,
+    ),
+    "orientation": RewardTermCfg(
+      func=envs_mdp.flat_orientation_l2,
+      weight=-1.0,
+    ),
+    "base_height": RewardTermCfg(
+      func=mdp.reward_base_height,
+      weight=-10.0,
+      params={"target_height": 0.78},
+    ),
+    "dof_acc": RewardTermCfg(
+      func=envs_mdp.joint_acc_l2,
+      weight=-2.5e-7,
+    ),
+    "dof_vel": RewardTermCfg(
+      func=envs_mdp.joint_vel_l2,
+      weight=-1e-3,
+    ),
+    "action_rate": RewardTermCfg(
+      func=envs_mdp.action_rate_l2,
+      weight=-0.01,
+    ),
+    "dof_pos_limits": RewardTermCfg(
+      func=envs_mdp.joint_pos_limits,
+      weight=-5.0,
+    ),
+    "alive": RewardTermCfg(
+      func=envs_mdp.is_alive,
+      weight=0.15,
+    ),
+    "hip_pos": RewardTermCfg(
+      func=mdp.reward_hip_pos,
+      weight=-1.0,
+      params={
+        "asset_cfg": SceneEntityCfg(
+          "robot",
+          joint_names=(
+            "left_hip_roll_joint",
+            "left_hip_pitch_joint",
+            "right_hip_roll_joint",
+            "right_hip_pitch_joint",
+          ),
+        ),
+      },
+    ),
+    "contact": RewardTermCfg(
+      func=mdp.gait_phase_contact,
+      weight=0.18,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "period": gait_period,
+        "offset": gait_offset,
+        "stance_ratio": 0.55,
+      },
+    ),
+    "contact_no_vel": RewardTermCfg(
+      func=mdp.reward_contact_no_vel,
+      weight=-0.2,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
+      },
+    ),
+    "feet_swing_height": RewardTermCfg(
+      func=mdp.reward_feet_swing_height_unitree,
+      weight=-20.0,
+      params={
+        "sensor_name": "feet_ground_contact",
+        "target_height": 0.08,
+        "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
+      },
+    ),
+  }
+
+  ##
+  # Terminations — match unitree_rl_gym: separate roll/pitch limits.
+  ##
+
+  cfg.terminations = {
+    "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
+    "bad_orientation": TerminationTermCfg(
+      func=mdp.bad_orientation_rpy,
+      params={"roll_limit": 0.8, "pitch_limit": 1.0},
+    ),
+  }
+
+  ##
+  # Commands — unitree uses 10s fixed resampling, no curriculum.
+  ##
+
+  twist_cmd = cfg.commands["twist"]
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  twist_cmd.resampling_time_range = (10.0, 10.0)
+  twist_cmd.ranges.lin_vel_x = (-1.0, 1.0)
+  twist_cmd.ranges.lin_vel_y = (-1.0, 1.0)
+  twist_cmd.ranges.ang_vel_z = (-1.0, 1.0)
+
+  ##
+  # Events — adjust push robot to match unitree (5s interval, 1.5 m/s).
+  ##
+
+  cfg.events["push_robot"] = EventTermCfg(
+    func=mdp.push_by_setting_velocity,
+    mode="interval",
+    interval_range_s=(5.0, 5.0),
+    params={
+      "velocity_range": {
+        "x": (-1.5, 1.5),
+        "y": (-1.5, 1.5),
+      },
+    },
+  )
+
+  # No velocity or terrain curriculum.
+  cfg.curriculum = {}
+
+  if play:
+    cfg.episode_length_s = int(1e9)
+    cfg.observations["actor"].enable_corruption = False
+    cfg.events.pop("push_robot", None)
+
+    twist_cmd = cfg.commands["twist"]
+    assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+    twist_cmd.ranges.lin_vel_x = (-1.5, 1.5)
+    twist_cmd.ranges.lin_vel_y = (-1.0, 1.0)
+    twist_cmd.ranges.ang_vel_z = (-0.7, 0.7)
+
+  return cfg

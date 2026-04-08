@@ -394,7 +394,88 @@ class variable_posture:
 
 
 #########################################################################
-# CUSTOM REWARDS
+# UNITREE RL GYM REWARDS
+#########################################################################
+
+
+def reward_lin_vel_z(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize vertical (z) base linear velocity. square(vz)."""
+  asset: Entity = env.scene[asset_cfg.name]
+  return torch.square(asset.data.root_link_lin_vel_b[:, 2])
+
+
+def reward_ang_vel_xy(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize base roll/pitch angular velocity (body frame)."""
+  asset: Entity = env.scene[asset_cfg.name]
+  return torch.sum(torch.square(asset.data.root_link_ang_vel_b[:, :2]), dim=1)
+
+
+def reward_base_height(
+  env: ManagerBasedRlEnv,
+  target_height: float,  # default 0.78 from unitree_rl_gym
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize deviation from target base height. square(h - target)."""
+  asset: Entity = env.scene[asset_cfg.name]
+  base_height = asset.data.root_link_pos_w[:, 2]
+  return torch.square(base_height - target_height)
+
+
+def reward_hip_pos(
+  env: ManagerBasedRlEnv,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize hip joint positions deviating from zero. ( mainly hip roll, hip yaw).
+
+  asset_cfg.joint_ids should point to the hip roll joints.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  return torch.sum(torch.square(asset.data.joint_pos[:, asset_cfg.joint_ids]), dim=1)
+
+
+def reward_contact_no_vel(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize foot velocity (3D) during ground contact."""
+  asset: Entity = env.scene[asset_cfg.name]
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  in_contact = (contact_sensor.data.found > 0).float()  # [B, N]
+  foot_vel = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :]  # [B, N, 3]
+  vel_sq = torch.sum(torch.square(foot_vel), dim=-1)  # [B, N]
+  return torch.sum(vel_sq * in_contact, dim=1)
+
+
+def reward_feet_swing_height_unitree(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  target_height: float,  # default 0.08
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """Penalize swing feet not reaching target height above ground.
+
+  Matches unitree_rl_gym: square(foot_z - target) during swing only.
+  """
+  asset: Entity = env.scene[asset_cfg.name]
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  in_contact = contact_sensor.data.found > 0  # [B, N]
+  foot_z = asset.data.site_pos_w[:, asset_cfg.site_ids, 2]  # [B, N]
+  foot_z = foot_z - env.scene.env_origins[:, 2:3]
+  error = torch.square(foot_z - target_height) * (~in_contact).float()
+  return torch.sum(error, dim=1)
+
+
+#########################################################################
+# OTHER CUSTOM REWARDS
 #########################################################################
 
 
@@ -441,7 +522,7 @@ def flat_foot_contact(
 def gait_phase_contact(
   env: ManagerBasedRlEnv,
   sensor_name: str,
-  period: float = 1.0,
+  period: float = 0.8,
   offset: float = 0.5,
   stance_ratio: float = 0.55,
 ) -> torch.Tensor:
@@ -466,4 +547,3 @@ def gait_phase_contact(
   # +1 when contact matches expectation, 0 otherwise.
   match = ~(in_contact ^ expected_stance)  # [B, 2]
   return match.float().sum(dim=1)  # [B]
-

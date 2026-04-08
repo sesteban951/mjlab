@@ -1,8 +1,7 @@
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
-
-import math  # Sergio added for custom phase obs
 
 import torch
 
@@ -50,7 +49,28 @@ def foot_contact_forces(env: ManagerBasedRlEnv, sensor_name: str) -> torch.Tenso
 
 
 #########################################################################
-# CUSTIOM OBSERVATIONS
+# UNITREE RL GYM OBSERVATIONS
+#########################################################################
+
+
+def phase(
+  env: ManagerBasedRlEnv,
+  period: float = 0.8,
+) -> torch.Tensor:
+  """Single-leg sinusoidal phase clock matching unitree_rl_gym.
+
+  Returns:
+    Tensor of shape [B, 2]: [sin(phase), cos(phase)].
+  """
+  phase = (env.episode_length_buf * env.step_dt) % period / period
+  return torch.stack(
+    [torch.sin(2.0 * math.pi * phase), torch.cos(2.0 * math.pi * phase)],
+    dim=-1,
+  )
+
+
+#########################################################################
+# OTHER CUSTOM OBSERVATIONS
 #########################################################################
 
 
@@ -76,4 +96,3 @@ def gait_phase(
     ],
     dim=-1,
   )
-
