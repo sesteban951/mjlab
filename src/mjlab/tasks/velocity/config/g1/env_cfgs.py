@@ -234,18 +234,28 @@ def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
   # Remove base_lin_vel from actor — not available on real hardware.
   del cfg.observations["actor"].terms["base_lin_vel"]
 
-  # Add gait phase clock to actor and critic observations.
+  # Add single-leg gait phase clock to actor and critic (2 values).
   desired_period = 1.0  # seconds per gait cycle
-  cfg.observations["actor"].terms["gait_phase"] = ObservationTermCfg(
-    func=mdp.gait_phase,
-    params={"period": desired_period, "offset": 0.5},
-  )
-  cfg.observations["critic"].terms["gait_phase"] = ObservationTermCfg(
-    func=mdp.gait_phase,
-    params={"period": desired_period, "offset": 0.5},
+  for group in ("actor", "critic"):
+    cfg.observations[group].terms["gait_phase"] = ObservationTermCfg(
+      func=mdp.phase,
+      params={"period": desired_period},
+    )
+
+  site_names = ("left_foot", "right_foot")
+
+  # Replace foot_slip with contact_no_vel (3D velocity, no command gating).
+  del cfg.rewards["foot_slip"]
+  cfg.rewards["contact_no_vel"] = RewardTermCfg(
+    func=mdp.reward_contact_no_vel,
+    weight=-0.2,
+    params={
+      "sensor_name": "feet_ground_contact",
+      "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
+    },
   )
 
-  # Reward flat foot contact during stance.
+  # Penalize foot tilt during stance (enforce flat foot contact).
   cfg.rewards["flat_foot"] = RewardTermCfg(
     func=mdp.flat_foot_contact,
     weight=-0.5,
@@ -258,14 +268,19 @@ def unitree_g1_flat_env_cfg_custom(play: bool = False) -> ManagerBasedRlEnvCfg:
     },
   )
 
-  # Reward correct foot contact timing with gait phase.
+  # Encourage feet to lift off the ground when moving.
+  cfg.rewards["air_time"].weight = 0.1
+  cfg.rewards["air_time"].params["threshold_max"] = 0.6
+
+  # Reward correct foot contact timing with gait phase (unitree_rl_gym style).
   cfg.rewards["gait_phase_contact"] = RewardTermCfg(
     func=mdp.gait_phase_contact,
-    weight=0.15,
+    weight=0.18,
     params={
       "sensor_name": "feet_ground_contact",
       "period": desired_period,
       "offset": 0.5,
+      "stance_ratio": 0.55,
     },
   )
 

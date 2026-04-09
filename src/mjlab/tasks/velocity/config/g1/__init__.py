@@ -3,9 +3,9 @@ from mjlab.tasks.velocity.rl import VelocityOnPolicyRunner
 
 from .env_cfgs import (
   unitree_g1_flat_env_cfg,
-  unitree_g1_rough_env_cfg,
   unitree_g1_flat_env_cfg_custom,
   unitree_g1_flat_env_cfg_unitree_rl_gym,
+  unitree_g1_rough_env_cfg,
 )
 from .rl_cfg import unitree_g1_ppo_runner_cfg, unitree_g1_ppo_runner_cfg_custom
 
