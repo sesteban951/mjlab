@@ -4,8 +4,8 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from mjlab.sensor import ContactSensor
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactSensor
 from mjlab.utils.lab_api.math import euler_xyz_from_quat
 
 if TYPE_CHECKING:

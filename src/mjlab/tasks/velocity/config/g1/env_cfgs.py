@@ -4,14 +4,15 @@ from mjlab.asset_zoo.robots import (
   G1_ACTION_SCALE,
   get_g1_robot_cfg,
 )
+from mjlab.asset_zoo.robots.unitree_g1.g1_constants import HOME_KEYFRAME
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
-from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.curriculum_manager import CurriculumTermCfg
-from mjlab.managers.observation_manager import ObservationTermCfg
-from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.observation_manager import ObservationTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
 from mjlab.sensor import (
   ContactMatch,
@@ -307,6 +308,9 @@ def unitree_g1_flat_env_cfg_unitree_rl_gym(
   """
   cfg = unitree_g1_flat_env_cfg(play=play)
 
+  # Use HOME_KEYFRAME: unitree leg defaults + custom arm/waist defaults.
+  cfg.scene.entities["robot"].init_state = HOME_KEYFRAME
+
   site_names = ("left_foot", "right_foot")
   gait_period = 0.8
   gait_offset = 0.5
@@ -341,10 +345,6 @@ def unitree_g1_flat_env_cfg_unitree_rl_gym(
       weight=0.5,
       params={"command_name": "twist", "std": 0.5},
     ),
-    "lin_vel_z": RewardTermCfg(
-      func=mdp.reward_lin_vel_z,
-      weight=-2.0,
-    ),
     "ang_vel_xy": RewardTermCfg(
       func=mdp.reward_ang_vel_xy,
       weight=-0.05,
@@ -352,11 +352,6 @@ def unitree_g1_flat_env_cfg_unitree_rl_gym(
     "orientation": RewardTermCfg(
       func=envs_mdp.flat_orientation_l2,
       weight=-1.0,
-    ),
-    "base_height": RewardTermCfg(
-      func=mdp.reward_base_height,
-      weight=-10.0,
-      params={"target_height": 0.78},
     ),
     "dof_acc": RewardTermCfg(
       func=envs_mdp.joint_acc_l2,
@@ -378,21 +373,6 @@ def unitree_g1_flat_env_cfg_unitree_rl_gym(
       func=envs_mdp.is_alive,
       weight=0.15,
     ),
-    "hip_pos": RewardTermCfg(
-      func=mdp.reward_hip_pos,
-      weight=-1.0,
-      params={
-        "asset_cfg": SceneEntityCfg(
-          "robot",
-          joint_names=(
-            "left_hip_roll_joint",
-            "left_hip_pitch_joint",
-            "right_hip_roll_joint",
-            "right_hip_pitch_joint",
-          ),
-        ),
-      },
-    ),
     "contact": RewardTermCfg(
       func=mdp.gait_phase_contact,
       weight=0.18,
@@ -411,13 +391,64 @@ def unitree_g1_flat_env_cfg_unitree_rl_gym(
         "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
       },
     ),
-    "feet_swing_height": RewardTermCfg(
-      func=mdp.reward_feet_swing_height_unitree,
-      weight=-20.0,
+    "air_time": RewardTermCfg(
+      func=mdp.feet_air_time,
+      weight=1.0,
       params={
         "sensor_name": "feet_ground_contact",
-        "target_height": 0.08,
-        "asset_cfg": SceneEntityCfg("robot", site_names=site_names),
+        "threshold_min": 0.05,
+        "threshold_max": 0.5,
+        "command_name": "twist",
+        "command_threshold": 0.1,
+      },
+    ),
+    "pose": RewardTermCfg(
+      func=mdp.variable_posture,
+      weight=1.0,
+      params={
+        "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
+        "command_name": "twist",
+        "std_standing": {".*": 0.05},
+        "std_walking": {
+          # Lower body.
+          r".*hip_pitch.*": 0.3,
+          r".*hip_roll.*": 0.15,
+          r".*hip_yaw.*": 0.15,
+          r".*knee.*": 0.35,
+          r".*ankle_pitch.*": 0.25,
+          r".*ankle_roll.*": 0.1,
+          # Waist.
+          r".*waist_yaw.*": 0.2,
+          r".*waist_roll.*": 0.08,
+          r".*waist_pitch.*": 0.1,
+          # Arms.
+          r".*shoulder_pitch.*": 0.15,
+          r".*shoulder_roll.*": 0.15,
+          r".*shoulder_yaw.*": 0.1,
+          r".*elbow.*": 0.15,
+          r".*wrist.*": 0.3,
+        },
+        "std_running": {
+          # Lower body.
+          r".*hip_pitch.*": 0.5,
+          r".*hip_roll.*": 0.2,
+          r".*hip_yaw.*": 0.2,
+          r".*knee.*": 0.6,
+          r".*ankle_pitch.*": 0.35,
+          r".*ankle_roll.*": 0.15,
+          # Waist.
+          r".*waist_yaw.*": 0.3,
+          r".*waist_roll.*": 0.08,
+          r".*waist_pitch.*": 0.2,
+          # Arms.
+          r".*shoulder_pitch.*": 0.5,
+          r".*shoulder_roll.*": 0.2,
+          r".*shoulder_yaw.*": 0.15,
+          r".*elbow.*": 0.35,
+          r".*wrist.*": 0.3,
+        },
+        "walking_threshold": 0.05,
+        "running_threshold": 1.5,
       },
     ),
   }

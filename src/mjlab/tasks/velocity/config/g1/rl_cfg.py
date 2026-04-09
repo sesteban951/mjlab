@@ -44,3 +44,17 @@ def unitree_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     num_steps_per_env=24,
     max_iterations=30_000,
   )
+
+
+#########################################################################
+# CUSTOM CONFIGS
+#########################################################################
+
+
+def unitree_g1_ppo_runner_cfg_custom() -> RslRlOnPolicyRunnerCfg:
+  """Custom RL runner for unitree_rl_gym-style G1 velocity task."""
+  cfg = unitree_g1_ppo_runner_cfg()
+  cfg.actor.hidden_dims = (128, 64, 32)
+  cfg.critic.hidden_dims = (128, 64, 32)
+  cfg.experiment_name = "g1_velocity_unitree_rl_gym"
+  return cfg
