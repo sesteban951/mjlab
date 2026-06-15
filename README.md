@@ -138,3 +138,43 @@ design and abstractions mjlab builds upon.
 Thanks to the MuJoCo Warp team — especially Erik Frey and Taylor Howell — for
 answering our questions, giving helpful feedback, and implementing features
 based on our requests countless times.
+
+---
+
+# Sergio's Custom Commmands
+Some commands that are more direct to me. 
+
+## Motion Tracking
+To parse a motion, your provide a csv file with a genearilzed configuration `qpos`, whose order is `[q_base, q_x, q_y, q_z, q_w, q_joint]`:
+
+```bash
+# Parse a motion from csv to npz format required for motion tracking.
+uv run python -m mjlab.scripts.csv_to_npz \
+  --input-file trajectories/srb_ik_jump_fwd/srb_ik_jump_fwd_29dof.csv \
+  --output-name srb_ik_jump_fwd_29dof \
+  --input-fps 50.0 \
+  --output-fps 50.0 \
+  --render True
+```
+
+where:
+- `--input-file` is the path to your csv file.
+- `--output-name` is the name of the output npz file.
+- `--input-fps` is the fps of YOUR trajectory.
+- `--output-fps` is the fps for training (the policy query frequency).
+- `--render` produces an mp4 video when `True`.
+
+To train with a already parsed motion file, you can use the following command:
+```bash
+# Train a tracking policy given a motion file in the registry.
+uv run train G1-29Dof-Tracking-Custom \
+  --registry-name wandb-registry-motions/srb_ik_jump_fwd_29dof \
+  --env.scene.num-envs 4096 \
+  --video True --video-interval 1000
+```
+
+where:
+- `--registry-name` is the parsed motion file in the wandb registry.
+- `--env.scene.num-envs` is the number of parallel envs for training.
+- `--video` records checkpoint videos of training progress when `True`.
+- `--video-interval` is how often (in steps) a video clip is recorded.
