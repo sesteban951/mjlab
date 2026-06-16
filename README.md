@@ -145,6 +145,8 @@ based on our requests countless times.
 Some commands that are more direct to me. 
 
 ## Motion Tracking
+
+### Parse a Motion
 To parse a motion, your provide a csv file with a genearilzed configuration `qpos`, whose order is `[q_base, q_x, q_y, q_z, q_w, q_joint]`:
 
 ```bash
@@ -164,13 +166,15 @@ where:
 - `--output-fps` is the fps for training (the policy query frequency).
 - `--render` produces an mp4 video when `True`.
 
+### Train
 To train with a already parsed motion file, you can use the following command:
 ```bash
 # Train a tracking policy given a motion file in the registry.
 uv run train G1-29Dof-Tracking-Custom \
   --registry-name wandb-registry-motions/srb_ik_jump_fwd_29dof \
   --env.scene.num-envs 4096 \
-  --video True --video-interval 1000
+  --video True --video-interval 1000 \
+  --env.viewer.width 1280 --env.viewer.height 720
 ```
 
 where:
@@ -178,3 +182,63 @@ where:
 - `--env.scene.num-envs` is the number of parallel envs for training.
 - `--video` records checkpoint videos of training progress when `True`.
 - `--video-interval` is how often (in steps) a video clip is recorded.
+
+### Play
+To play a trained motion tracking policy, run the following command:
+
+```bash
+# Play a trained motion tracking policy.
+uv run play G1-29Dof-Tracking-Custom \
+  --wandb-run-path <wandb-run-path> \
+  --num-envs 10
+```
+
+where:
+- `--wandb-run-path` is the path to your trained model in Weights & Biases (e.g. `<entity>/mjlab/<run-id>`); fetches the latest checkpoint and the motion artifact used in that run.
+- `--num-envs` is the number of robots to view at once.
+
+Unlike velocity tasks, tracking needs a reference motion. `--wandb-run-path` resolves it automatically from the run. If you instead load a local checkpoint with `--checkpoint-file`, you must also pass `--motion-file <path>.npz`.
+
+
+## Twist Command Tracking
+### Train
+
+```bash
+# Train a velocity command tracking policy.
+uv run train G1-29Dof-Velocity-Custom \
+  --env.scene.num-envs 4096 \
+  --video True --video-interval 1000 \
+  --env.viewer.width 1280 --env.viewer.height 720
+```
+
+where:
+- `--env.scene.num-envs` is the number of parallel envs for training.
+- `--video` records checkpoint videos of training progress when `True`.
+- `--video-interval` is how often (in steps) a video clip is recorded.
+- `--env.viewer.width` / `--env.viewer.height` set the recorded video resolution (here 720p).
+
+### Play
+To play a trained velocity command tracking policy, run the following command:
+
+```bash
+# Play a trained velocity command tracking policy.
+uv run play G1-29Dof-Velocity-Custom \
+  --wandb-run-path <wandb-run-path> \
+  --num-envs 10
+```
+
+where:
+- `--wandb-run-path` is the path to your trained model in Weights & Biases (e.g. `<entity>/mjlab/<run-id>`); fetches the latest checkpoint of that run.
+- `--num-envs` is the number of robots to view at once.
+
+## Other Flags
+These options apply to both the motion tracking and velocity playback commands above:
+- `--checkpoint-file` loads a local checkpoint instead of W&B (e.g. `logs/rsl_rl/<experiment>/<run>/model_500.pt`).
+- `--wandb-checkpoint-name` pins a specific checkpoint within the run (e.g. `model_4000.pt`).
+- `--agent` selects the policy: `trained` (default), or `zero` / `random` for a no-checkpoint sanity check.
+- `--num-envs` sets how many robots to view at once.
+- `--viewer` chooses the viewer: `auto` (default), `native`, or `viser`.
+- `--no-terminations` disables episode resets (keeps the robot going for viewing).
+- `--video` / `--video-length` / `--video-width` / `--video-height` record the playback to an mp4.
+- `--camera` selects a camera by index or name.
+- `--device` overrides the compute device (e.g. `cpu`, `cuda:0`).
