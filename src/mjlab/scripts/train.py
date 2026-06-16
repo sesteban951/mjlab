@@ -30,6 +30,10 @@ class TrainConfig:
   video: bool = False
   video_length: int = 200
   video_interval: int = 2000
+  """Record a video every N environment steps."""
+  video_iter_interval: int | None = None
+  """Record a video every N PPO iterations. Takes precedence over ``video_interval``
+  when set (converted to env steps via ``agent.num_steps_per_env``)."""
   enable_nan_guard: bool = False
   log_root: str = "logs/rsl_rl"
   """Root directory under which experiment logs are written."""
@@ -136,14 +140,22 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
 
   # Only record videos on rank 0 to avoid multiple workers writing to the same files.
   if cfg.video and rank == 0:
+    # Resolve the recording interval in env steps. --video-iter-interval (in PPO
+    # iterations) takes precedence, converted via num_steps_per_env.
+    if cfg.video_iter_interval is not None:
+      video_step_interval = cfg.video_iter_interval * cfg.agent.num_steps_per_env
+    else:
+      video_step_interval = cfg.video_interval
     env = VideoRecorder(
       env,
       video_folder=Path(log_dir) / "videos" / "train",
-      step_trigger=lambda step: step % cfg.video_interval == 0,
+      step_trigger=lambda step: step % video_step_interval == 0,
       video_length=cfg.video_length,
       disable_logger=True,
     )
-    print("[INFO] Recording videos during training.")
+    print(
+      f"[INFO] Recording videos during training (every {video_step_interval} env steps)."
+    )
 
   env = RslRlVecEnvWrapper(env, clip_actions=cfg.agent.clip_actions)
 

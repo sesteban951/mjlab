@@ -173,7 +173,7 @@ To train with a already parsed motion file, you can use the following command:
 uv run train G1-29Dof-Tracking-Custom \
   --registry-name wandb-registry-motions/srb_ik_jump_fwd_29dof \
   --env.scene.num-envs 4096 \
-  --video True --video-interval 1000 \
+  --video True --video-iter-interval 500 \
   --env.viewer.width 1280 --env.viewer.height 720
 ```
 
@@ -181,7 +181,7 @@ where:
 - `--registry-name` is the parsed motion file in the wandb registry.
 - `--env.scene.num-envs` is the number of parallel envs for training.
 - `--video` records checkpoint videos of training progress when `True`.
-- `--video-interval` is how often (in steps) a video clip is recorded.
+- `--video-iter-interval` is how often (in PPO iterations) a video clip is recorded.
 
 ### Play
 To play a trained motion tracking policy, run the following command:
@@ -207,14 +207,14 @@ Unlike velocity tasks, tracking needs a reference motion. `--wandb-run-path` res
 # Train a velocity command tracking policy.
 uv run train G1-29Dof-Velocity-Custom \
   --env.scene.num-envs 4096 \
-  --video True --video-interval 1000 \
+  --video True --video-iter-interval 500 \
   --env.viewer.width 1280 --env.viewer.height 720
 ```
 
 where:
 - `--env.scene.num-envs` is the number of parallel envs for training.
 - `--video` records checkpoint videos of training progress when `True`.
-- `--video-interval` is how often (in steps) a video clip is recorded.
+- `--video-iter-interval` is how often (in PPO iterations) a video clip is recorded.
 - `--env.viewer.width` / `--env.viewer.height` set the recorded video resolution (here 720p).
 
 ### Play
