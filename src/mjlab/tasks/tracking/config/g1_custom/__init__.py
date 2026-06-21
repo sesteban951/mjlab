@@ -2,38 +2,18 @@ from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 
 from .env_cfgs import (
-  unitree_g1_23dof_custom_flat_tracking_env_cfg,
-  unitree_g1_29dof_custom_flat_tracking_env_cfg,
+  unitree_g1_custom_flat_tracking_env_cfg,
 )
 from .rl_cfg import (
-  unitree_g1_23dof_custom_tracking_ppo_runner_cfg,
-  unitree_g1_29dof_custom_tracking_ppo_runner_cfg,
+  unitree_g1_custom_tracking_ppo_runner_cfg,
 )
 
-#########################################################
-# G1 29 DOF
-#########################################################
-
 register_mjlab_task(
-  task_id="G1-29Dof-Tracking-Custom",
-  env_cfg=unitree_g1_29dof_custom_flat_tracking_env_cfg(has_state_estimation=False),
-  play_env_cfg=unitree_g1_29dof_custom_flat_tracking_env_cfg(
+  task_id="G1-Tracking-Custom",
+  env_cfg=unitree_g1_custom_flat_tracking_env_cfg(has_state_estimation=False),
+  play_env_cfg=unitree_g1_custom_flat_tracking_env_cfg(
     has_state_estimation=False, play=True
   ),
-  rl_cfg=unitree_g1_29dof_custom_tracking_ppo_runner_cfg(),
-  runner_cls=MotionTrackingOnPolicyRunner,
-)
-
-#########################################################
-# G1 23 DOF
-#########################################################
-
-register_mjlab_task(
-  task_id="G1-23Dof-Tracking-Custom",
-  env_cfg=unitree_g1_23dof_custom_flat_tracking_env_cfg(has_state_estimation=False),
-  play_env_cfg=unitree_g1_23dof_custom_flat_tracking_env_cfg(
-    has_state_estimation=False, play=True
-  ),
-  rl_cfg=unitree_g1_23dof_custom_tracking_ppo_runner_cfg(),
+  rl_cfg=unitree_g1_custom_tracking_ppo_runner_cfg(),
   runner_cls=MotionTrackingOnPolicyRunner,
 )

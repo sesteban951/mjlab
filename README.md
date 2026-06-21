@@ -170,7 +170,7 @@ where:
 To train with a already parsed motion file, you can use the following command:
 ```bash
 # Train a tracking policy given a motion file in the registry.
-uv run train G1-29Dof-Tracking-Custom \
+uv run train G1-Tracking-Custom \
   --registry-name wandb-registry-motions/srb_ik_jump_fwd_29dof \
   --env.scene.num-envs 4096 \
   --video True --video-iter-interval 500 \
@@ -188,7 +188,7 @@ To play a trained motion tracking policy, run the following command:
 
 ```bash
 # Play a trained motion tracking policy.
-uv run play G1-29Dof-Tracking-Custom \
+uv run play G1-Tracking-Custom \
   --wandb-run-path <wandb-run-path> \
   --num-envs 10
 ```
@@ -205,7 +205,7 @@ Unlike velocity tasks, tracking needs a reference motion. `--wandb-run-path` res
 
 ```bash
 # Train a velocity command tracking policy.
-uv run train G1-29Dof-Velocity-Custom \
+uv run train G1-Velocity-Custom \
   --env.scene.num-envs 4096 \
   --video True --video-iter-interval 500 \
   --env.viewer.width 1280 --env.viewer.height 720
@@ -222,7 +222,7 @@ To play a trained velocity command tracking policy, run the following command:
 
 ```bash
 # Play a trained velocity command tracking policy.
-uv run play G1-29Dof-Velocity-Custom \
+uv run play G1-Velocity-Custom \
   --wandb-run-path <wandb-run-path> \
   --num-envs 10
 ```
