@@ -200,6 +200,28 @@ where:
 Unlike velocity tasks, tracking needs a reference motion. `--wandb-run-path` resolves it automatically from the run. If you instead load a local checkpoint with `--checkpoint-file`, you must also pass `--motion-file <path>.npz`.
 
 
+## Contact-Rich Motion Tracking
+`G1-Tracking-ContactRich-Custom` is a tracking variant for highly contact-rich
+motions such as crawling, where many body links (not just the feet) contact the
+ground. Every body collision geom is made frictional (condim=3, priority=1) and
+its tangential friction is randomized, unlike the foot-only friction of the base
+tracking env.
+
+### Train
+
+```bash
+# Train a contact-rich motion tracking policy (e.g. crawling).
+uv run train G1-Tracking-ContactRich-Custom \
+  --registry-name wandb-registry-motions/crawl_ff_loop_180_R_001__A229_29dof \
+  --env.scene.num-envs 4096 \
+  --video True --video-iter-interval 500 \
+  --env.viewer.width 1280 --env.viewer.height 720
+```
+
+Play it with `uv run play G1-Tracking-ContactRich-Custom` using the same flags as
+the motion tracking Play command above.
+
+
 ## Twist Command Tracking
 ### Train
 
