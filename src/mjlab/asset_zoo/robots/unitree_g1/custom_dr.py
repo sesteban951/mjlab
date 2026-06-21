@@ -80,7 +80,7 @@ def add_custom_g1_dr(
     mode="startup",
     func=dr.pd_gains,
     params={
-      "asset_cfg": SceneEntityCfg("robot", actuator_names=(".*",)),
+      "asset_cfg": SceneEntityCfg("robot", actuator_names=[".*"]),
       "kp_range": dr_cfg.pd_kp,
       "kd_range": dr_cfg.pd_kd,
       "operation": "scale",
