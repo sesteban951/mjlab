@@ -30,7 +30,7 @@ CONTACT_RICH_COLLISION = CollisionCfg(
 )
 
 # Tangential friction range, randomized independently per body geom.
-BODY_FRICTION_RANGE = (0.3, 1.5)
+BODY_FRICTION_RANGE = (0.3, 1.6)
 
 
 def unitree_g1_custom_contactrich_flat_tracking_env_cfg(

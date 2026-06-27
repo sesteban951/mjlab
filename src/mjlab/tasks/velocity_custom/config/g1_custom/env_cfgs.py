@@ -7,7 +7,7 @@ from mjlab.asset_zoo.robots import (
   G1_ACTION_SCALE,
   get_g1_robot_cfg,
 )
-from mjlab.asset_zoo.robots.unitree_g1.custom_dr import CustomDRCfg, add_custom_g1_dr
+from mjlab.asset_zoo.robots.unitree_g1.custom_dr import add_custom_g1_dr
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -148,9 +148,8 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
 
   # Apply the shared custom DR base (retunes COM/encoder/friction; adds PD-gain,
   # joint-friction, and joint-armature randomization). Perturbation and reset are
-  # left to the inherited base, which matches unitree_rl_mjlab. Velocity keeps the
-  # wider foot-friction range (the shared default is 0.3-1.2).
-  add_custom_g1_dr(cfg, CustomDRCfg(foot_friction=(0.3, 1.6)))
+  # left to the inherited base, which matches unitree_rl_mjlab.
+  add_custom_g1_dr(cfg)
 
   # Apply play mode overrides.
   if play:

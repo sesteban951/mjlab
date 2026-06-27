@@ -11,6 +11,7 @@ keeping physical-property DR active in play mode (only ``push_robot`` and
 observation noise are disabled there).
 """
 
+import math
 from dataclasses import dataclass, field
 
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -40,13 +41,16 @@ class CustomDRCfg:
   pd_kp: tuple[float, float] = (0.8, 1.2)
   pd_kd: tuple[float, float] = (0.8, 1.2)
   # Joint friction loss, added to nominal (N·m).
-  joint_friction: tuple[float, float] = (0.0, 0.02)
+  joint_friction: tuple[float, float] = (0.0, 1.0)
   # Joint armature scale factor (multiplicative).
   joint_armature: tuple[float, float] = (0.95, 1.05)
+  # Base (torso_link) mass scale factor (multiplicative). Applied via
+  # pseudo_inertia so mass and inertia scale together (a density change).
+  base_mass: tuple[float, float] = (0.9, 1.1)
   # Per-joint encoder offset (rad).
   encoder_bias: tuple[float, float] = (-0.015, 0.015)
   # Foot friction coefficient (absolute), shared across foot geoms.
-  foot_friction: tuple[float, float] = (0.3, 1.2)
+  foot_friction: tuple[float, float] = (0.3, 1.6)
 
 
 def add_custom_g1_dr(
@@ -56,9 +60,9 @@ def add_custom_g1_dr(
   """Apply the shared custom G1 DR base in place.
 
   Retunes the inherited ``base_com``, ``encoder_bias``, and ``foot_friction``
-  startup terms, and adds ``pd_gains``, ``joint_friction``, and
-  ``joint_armature``. Perturbation (``push_robot``) and reset randomization are
-  intentionally left to the inherited base config.
+  startup terms, and adds ``pd_gains``, ``joint_friction``, ``joint_armature``,
+  and ``base_mass`` (torso mass+inertia). Perturbation (``push_robot``) and reset
+  randomization are intentionally left to the inherited base config.
 
   Args:
     cfg: An already-built env config. Its ``events`` dict must already contain
@@ -102,5 +106,17 @@ def add_custom_g1_dr(
       "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
       "ranges": dr_cfg.joint_armature,
       "operation": "scale",
+    },
+  )
+  # Randomize torso mass and inertia together (a density change). pseudo_inertia
+  # scales mass by e^(2*alpha), so a multiplicative mass-scale range (lo, hi)
+  # maps to alpha_range = (0.5*ln(lo), 0.5*ln(hi)).
+  mass_lo, mass_hi = dr_cfg.base_mass
+  cfg.events["base_mass"] = EventTermCfg(
+    mode="startup",
+    func=dr.pseudo_inertia,
+    params={
+      "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
+      "alpha_range": (0.5 * math.log(mass_lo), 0.5 * math.log(mass_hi)),
     },
   )
