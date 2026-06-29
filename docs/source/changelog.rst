@@ -41,6 +41,11 @@ Changed
 Fixed
 ^^^^^
 
+- Fixed the velocity task runner never uploading its exported ONNX policy to
+  Weights & Biases. The upload was gated on ``logger_type == "wandb"``, but
+  rsl-rl renames the logger type to ``"WandbLogWriter"`` at init, so the check
+  always failed and only the local ``.onnx`` was written. The velocity runner
+  now accepts both names, matching the tracking runner.
 - Fixed domain randomization events that target different ``axes`` of the same
   model field (e.g. two ``dr.geom_size`` events scaling axis 0 and axis 1
   separately) silently clobbering each other. Each event now writes back only
