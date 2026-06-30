@@ -7,7 +7,10 @@ from mjlab.asset_zoo.robots import (
   G1_ACTION_SCALE,
   get_g1_robot_cfg,
 )
-from mjlab.asset_zoo.robots.unitree_g1.custom_dr import add_custom_g1_dr
+from mjlab.asset_zoo.robots.unitree_g1.custom_dr import (
+  add_custom_g1_actuator_delay,
+  add_custom_g1_dr,
+)
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
@@ -150,6 +153,12 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # joint-friction, and joint-armature randomization). Perturbation and reset are
   # left to the inherited base, which matches unitree_rl_mjlab.
   add_custom_g1_dr(cfg)
+
+  # Add 0-0.02s (0 to one control step) of randomized per-env actuator command
+  # delay. Training only: deployment has its own latency, and play/eval mirrors
+  # mjlab's convention of dropping perturbation-style randomization.
+  if not play:
+    add_custom_g1_actuator_delay(cfg, min_delay_sec=0.0, max_delay_sec=0.02)
 
   # Apply play mode overrides.
   if play:

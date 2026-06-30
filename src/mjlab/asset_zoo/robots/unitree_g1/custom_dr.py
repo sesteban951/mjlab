@@ -12,8 +12,10 @@ observation noise are disabled there).
 """
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
+from mjlab.actuator import BuiltinPositionActuatorCfg
+from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.managers.event_manager import EventTermCfg
@@ -119,4 +121,52 @@ def add_custom_g1_dr(
       "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
       "alpha_range": (0.5 * math.log(mass_lo), 0.5 * math.log(mass_hi)),
     },
+  )
+
+
+def add_custom_g1_actuator_delay(
+  cfg: ManagerBasedRlEnvCfg,
+  min_delay_sec: float = 0.0,
+  max_delay_sec: float = 0.02,
+) -> None:
+  """Add per-env command delay to the G1 built-in position actuators in place.
+
+  Actuator delay is a built-in actuator property, not an event term: each step a
+  per-env lag is sampled uniformly in ``[min, max]`` physics steps and applied to
+  the command targets, modeling policy-to-motor latency. Delays are given in
+  seconds here and converted to physics steps via the sim timestep, and the lag is
+  re-sampled once per control step.
+
+  Rebuilds the robot entity functionally (via ``dataclasses.replace``) so the
+  shared G1 actuator constants in ``g1_constants`` are left untouched.
+
+  Args:
+    cfg: An already-built env config whose ``robot`` entity uses the G1 built-in
+      position actuators.
+    min_delay_sec: Minimum command delay in seconds.
+    max_delay_sec: Maximum command delay in seconds. ``0`` disables delay.
+  """
+  robot_cfg = cfg.scene.entities["robot"]
+  assert isinstance(robot_cfg, EntityCfg)
+  assert robot_cfg.articulation is not None
+
+  timestep = cfg.sim.mujoco.timestep
+  min_lag = round(min_delay_sec / timestep)
+  max_lag = round(max_delay_sec / timestep)
+
+  actuators = tuple(
+    replace(
+      act,
+      delay_min_lag=min_lag,
+      delay_max_lag=max_lag,
+      delay_update_period=cfg.decimation,
+      delay_per_env_phase=True,
+    )
+    if isinstance(act, BuiltinPositionActuatorCfg)
+    else act
+    for act in robot_cfg.articulation.actuators
+  )
+  cfg.scene.entities["robot"] = replace(
+    robot_cfg,
+    articulation=replace(robot_cfg.articulation, actuators=actuators),
   )

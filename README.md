@@ -231,6 +231,7 @@ uv run train G1-Velocity-Custom \
   --env.scene.num-envs 4096 \
   --video True --video-iter-interval 500 \
   --env.viewer.width 1280 --env.viewer.height 720
+  --agent.max-iterations 20000 \
 ```
 
 where:
@@ -238,6 +239,7 @@ where:
 - `--video` records checkpoint videos of training progress when `True`.
 - `--video-iter-interval` is how often (in PPO iterations) a video clip is recorded.
 - `--env.viewer.width` / `--env.viewer.height` set the recorded video resolution (here 720p).
+- `--agent.max-iterations` sets how many PPO iterations to train for (overrides the task default).
 
 ### Play
 To play a trained velocity command tracking policy, run the following command:
