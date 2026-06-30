@@ -173,6 +173,7 @@ To train with a already parsed motion file, you can use the following command:
 uv run train G1-Tracking-Custom \
   --registry-name wandb-registry-motions/srb_ik_jump_fwd_29dof \
   --env.scene.num-envs 4096 \
+  --agent.max-iterations 30001 \
   --video True --video-iter-interval 500 \
   --env.viewer.width 1280 --env.viewer.height 720
 ```
@@ -180,6 +181,7 @@ uv run train G1-Tracking-Custom \
 where:
 - `--registry-name` is the parsed motion file in the wandb registry.
 - `--env.scene.num-envs` is the number of parallel envs for training.
+- `--agent.max-iterations` sets how many PPO iterations to train for (overrides the task default). Use a trailing `+1` (e.g. `30001`) so the final iteration lands on a `--agent.save-interval` boundary and the last checkpoint/ONNX is written at a round number (`model_30000.pt`); plain `30000` would stop at `model_29500.pt`.
 - `--video` records checkpoint videos of training progress when `True`.
 - `--video-iter-interval` is how often (in PPO iterations) a video clip is recorded.
 
@@ -214,6 +216,7 @@ tracking env.
 uv run train G1-Tracking-ContactRich-Custom \
   --registry-name wandb-registry-motions/crawl_ff_loop_180_R_001__A229_29dof \
   --env.scene.num-envs 4096 \
+  --agent.max-iterations 30001 \
   --video True --video-iter-interval 500 \
   --env.viewer.width 1280 --env.viewer.height 720
 ```
@@ -229,17 +232,17 @@ the motion tracking Play command above.
 # Train a velocity command tracking policy.
 uv run train G1-Velocity-Custom \
   --env.scene.num-envs 4096 \
+  --agent.max-iterations 20001 \
   --video True --video-iter-interval 500 \
   --env.viewer.width 1280 --env.viewer.height 720
-  --agent.max-iterations 20000 \
 ```
 
 where:
 - `--env.scene.num-envs` is the number of parallel envs for training.
+- `--agent.max-iterations` sets how many PPO iterations to train for (overrides the task default). Use a trailing `+1` (e.g. `20001`) so the final iteration lands on a `--agent.save-interval` boundary and the last checkpoint/ONNX is written at a round number (`model_20000.pt`); plain `20000` would stop at `model_19900.pt`.
 - `--video` records checkpoint videos of training progress when `True`.
 - `--video-iter-interval` is how often (in PPO iterations) a video clip is recorded.
 - `--env.viewer.width` / `--env.viewer.height` set the recorded video resolution (here 720p).
-- `--agent.max-iterations` sets how many PPO iterations to train for (overrides the task default).
 
 ### Play
 To play a trained velocity command tracking policy, run the following command:
