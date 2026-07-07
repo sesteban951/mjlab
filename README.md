@@ -269,3 +269,26 @@ These options apply to both the motion tracking and velocity playback commands a
 - `--video` / `--video-length` / `--video-width` / `--video-height` record the playback to an mp4.
 - `--camera` selects a camera by index or name.
 - `--device` overrides the compute device (e.g. `cpu`, `cuda:0`).
+
+## Contact-Rich Locomotion
+Contact-rich locomotion (e.g. crawling) tracks a *library* of periodic clips — one per forward speed — instead of a single motion, and a commanded speed selects the nearest clip at runtime (see `Mjlab-Crawling-NoStopping-Flat-Unitree-G1`).
+
+### Parse the Gait Library
+The library ships as raw solver output: one `.npz` per speed storing per-frame full MuJoCo state `[qpos | qvel]`, named so the speed is parsable from the filename (`crawl_vp0_280` → +0.28 m/s). Convert the whole folder into the tracking-format npz the crawling task loads:
+
+```bash
+# Convert every clip in a library folder to tracking-format npz (local files, no wandb).
+uv run python -m mjlab.scripts.library_to_npz \
+  --input-dir trajectories/crawl_ff_loop_180_R_001__A229_library \
+  --output-dir trajectories/crawl_ff_loop_180_R_001__A229_tracking \
+  --input-fps 200.0 \
+  --output-fps 50.0
+```
+
+where:
+- `--input-dir` is the folder of raw library clips (`[qpos | qvel]` per frame).
+- `--output-dir` is where the converted per-body world-kinematics clips are written, one per input clip (basename preserved).
+- `--input-fps` is the fps of YOUR library clips.
+- `--output-fps` is the fps for training; it MUST equal the env control rate `1/step_dt` (50 Hz).
+
+The `--input-dir`/`--output-dir` defaults already point at the shipped library, so you can run it with no flags to regenerate the tracking clips.

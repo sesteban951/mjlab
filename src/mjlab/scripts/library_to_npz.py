@@ -1,11 +1,17 @@
 """Convert the mj-nlp crawl gait library into mjlab tracking-motion npz files.
 
-The library clips (``trajectories/library/crawl_vp0_*.npz``) store per-frame full MuJoCo state
+The library clips (``trajectories/crawl_ff_loop_180_R_001__A229_library/crawl_vp0_*.npz``) store
+per-frame full MuJoCo state
 ``state = [qpos(36) | qvel(35)]`` for the G1. mjlab's tracking ``MotionLoader`` instead expects
 per-body world kinematics (``joint_pos, joint_vel, body_pos_w, body_quat_w, body_lin_vel_w,
 body_ang_vel_w``). This script FK-replays each clip through the mjlab G1 scene to produce that
 schema, reusing csv_to_npz's finite-difference velocity recompute + FK logging, and writes one
-tracking npz per clip to disk (no Weights & Biases). Run once:
+tracking npz per clip to disk (no Weights & Biases).
+
+If the input dir also contains ``qpos_idle.csv`` (one G1 qpos row), it is FK-replayed and written
+as a held, zero-velocity speed-0 clip (``crawl_vp0_000.npz``) so the policy has an explicit static
+pose to track when commanded to stop. It is optional -- absent, zero-velocity commands just snap to
+the slowest crawl clip. Run once:
 
   uv run python -m mjlab.scripts.library_to_npz
 
@@ -33,20 +39,52 @@ _REPO_ROOT = Path(mjlab.MJLAB_SRC_PATH).parent.parent
 
 # The 29 actuated G1 joints, in the order the library `state` stores them (same as csv_to_npz).
 JOINT_NAMES = (
-  "left_hip_pitch_joint", "left_hip_roll_joint", "left_hip_yaw_joint", "left_knee_joint",
-  "left_ankle_pitch_joint", "left_ankle_roll_joint",
-  "right_hip_pitch_joint", "right_hip_roll_joint", "right_hip_yaw_joint", "right_knee_joint",
-  "right_ankle_pitch_joint", "right_ankle_roll_joint",
-  "waist_yaw_joint", "waist_roll_joint", "waist_pitch_joint",
-  "left_shoulder_pitch_joint", "left_shoulder_roll_joint", "left_shoulder_yaw_joint",
-  "left_elbow_joint", "left_wrist_roll_joint", "left_wrist_pitch_joint", "left_wrist_yaw_joint",
-  "right_shoulder_pitch_joint", "right_shoulder_roll_joint", "right_shoulder_yaw_joint",
-  "right_elbow_joint", "right_wrist_roll_joint", "right_wrist_pitch_joint", "right_wrist_yaw_joint",
+  "left_hip_pitch_joint",
+  "left_hip_roll_joint",
+  "left_hip_yaw_joint",
+  "left_knee_joint",
+  "left_ankle_pitch_joint",
+  "left_ankle_roll_joint",
+  "right_hip_pitch_joint",
+  "right_hip_roll_joint",
+  "right_hip_yaw_joint",
+  "right_knee_joint",
+  "right_ankle_pitch_joint",
+  "right_ankle_roll_joint",
+  "waist_yaw_joint",
+  "waist_roll_joint",
+  "waist_pitch_joint",
+  "left_shoulder_pitch_joint",
+  "left_shoulder_roll_joint",
+  "left_shoulder_yaw_joint",
+  "left_elbow_joint",
+  "left_wrist_roll_joint",
+  "left_wrist_pitch_joint",
+  "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint",
+  "right_shoulder_roll_joint",
+  "right_shoulder_yaw_joint",
+  "right_elbow_joint",
+  "right_wrist_roll_joint",
+  "right_wrist_pitch_joint",
+  "right_wrist_yaw_joint",
 )
 
 _LOG_KEYS = (
-  "joint_pos", "joint_vel", "body_pos_w", "body_quat_w", "body_lin_vel_w", "body_ang_vel_w",
+  "joint_pos",
+  "joint_vel",
+  "body_pos_w",
+  "body_quat_w",
+  "body_lin_vel_w",
+  "body_ang_vel_w",
 )
+
+# A single-row qpos CSV (``[base_pos(3) | base_quat(4, wxyz) | dof_pos(29)]``) placed in the input
+# dir is converted to a held, zero-velocity clip so the policy has an explicit pose to track at
+# zero commanded speed. The output name parses to speed 0.0 (see ``_parse_speed`` in the command),
+# so ``LibraryMotionLoader`` picks it up as the speed-0 clip with no command-side changes.
+_IDLE_CSV = "qpos_idle.csv"
+_IDLE_OUT = "crawl_vp0_000.npz"
 
 
 class LibraryMotionLoader(MotionLoader):
@@ -58,15 +96,21 @@ class LibraryMotionLoader(MotionLoader):
 
   def _load_motion(self):
     data = np.load(self.motion_file)
-    state = torch.from_numpy(np.asarray(data["state"], dtype=np.float32)).to(self.device)
+    state = torch.from_numpy(np.asarray(data["state"], dtype=np.float32)).to(
+      self.device
+    )
     self.motion_base_poss_input = state[:, 0:3]
-    self.motion_base_rots_input = state[:, 3:7]  # already wxyz -- no reorder (unlike the CSV path)
+    self.motion_base_rots_input = state[
+      :, 3:7
+    ]  # already wxyz -- no reorder (unlike the CSV path)
     self.motion_dof_poss_input = state[:, 7:36]  # 29 actuated joints
     self.input_frames = state.shape[0]
     self.duration = (self.input_frames - 1) * self.input_dt
 
 
-def _replay_to_log(sim, scene, robot: Entity, joint_indexes, motion: MotionLoader) -> dict[str, Any]:
+def _replay_to_log(
+  sim, scene, robot: Entity, joint_indexes, motion: MotionLoader
+) -> dict[str, Any]:
   """FK-replay one clip through the scene and return the stacked tracking-npz log dict."""
   log: dict[str, Any] = {"fps": np.asarray([motion.output_fps])}
   frames: dict[str, list] = {k: [] for k in _LOG_KEYS}
@@ -99,8 +143,12 @@ def _replay_to_log(sim, scene, robot: Entity, joint_indexes, motion: MotionLoade
     frames["joint_vel"].append(robot.data.joint_vel[0].cpu().numpy().copy())
     frames["body_pos_w"].append(robot.data.body_link_pos_w[0].cpu().numpy().copy())
     frames["body_quat_w"].append(robot.data.body_link_quat_w[0].cpu().numpy().copy())
-    frames["body_lin_vel_w"].append(robot.data.body_link_lin_vel_w[0].cpu().numpy().copy())
-    frames["body_ang_vel_w"].append(robot.data.body_link_ang_vel_w[0].cpu().numpy().copy())
+    frames["body_lin_vel_w"].append(
+      robot.data.body_link_lin_vel_w[0].cpu().numpy().copy()
+    )
+    frames["body_ang_vel_w"].append(
+      robot.data.body_link_ang_vel_w[0].cpu().numpy().copy()
+    )
 
     # Sanity: the sim's base body velocity must equal the finite-diff base velocity we fed in.
     # Loose tol (float32 GPU roundtrip is ~1e-5; a real frame-convention bug would be O(0.1+)).
@@ -119,17 +167,81 @@ def _replay_to_log(sim, scene, robot: Entity, joint_indexes, motion: MotionLoade
   return log
 
 
+def _idle_to_log(
+  sim,
+  scene,
+  robot: Entity,
+  joint_indexes,
+  idle_qpos,
+  num_frames: int,
+  output_fps: int,
+) -> dict[str, Any]:
+  """FK a single held pose and tile it to ``num_frames`` frames with zero velocities.
+
+  The idle clip is a static reference -- every frame identical, all velocities exactly zero -- so
+  the policy has an explicit pose to imitate at zero commanded speed rather than learning a rest
+  from shaping rewards. ``idle_qpos`` is one G1 qpos row:
+  ``[base_pos(3) | base_quat(4, wxyz) | dof_pos(29)]``.
+  """
+  idle_qpos = np.asarray(idle_qpos, dtype=np.float32).reshape(-1)
+  base_pos = torch.tensor(idle_qpos[0:3], device=sim.device).unsqueeze(0)
+  base_rot = torch.tensor(idle_qpos[3:7], device=sim.device).unsqueeze(0)  # wxyz, as-is
+  dof_pos = torch.tensor(idle_qpos[7:36], device=sim.device).unsqueeze(0)
+
+  scene.reset()
+  root_states = robot.data.default_root_state.clone()
+  root_states[:, 0:3] = base_pos
+  root_states[:, :2] += scene.env_origins[:, :2]
+  root_states[:, 3:7] = base_rot
+  root_states[:, 7:] = 0.0  # zero base linear + angular velocity
+  robot.write_root_state_to_sim(root_states)
+
+  joint_pos = robot.data.default_joint_pos.clone()
+  joint_vel = robot.data.default_joint_vel.clone()
+  joint_pos[:, joint_indexes] = dof_pos
+  joint_vel[:, joint_indexes] = 0.0
+  robot.write_joint_state_to_sim(joint_pos, joint_vel)
+
+  sim.forward()
+  scene.update(sim.mj_model.opt.timestep)
+
+  jp = robot.data.joint_pos[0].cpu().numpy().copy()
+  bp = robot.data.body_link_pos_w[0].cpu().numpy().copy()
+  bq = robot.data.body_link_quat_w[0].cpu().numpy().copy()
+  nj, nb = jp.shape[0], bp.shape[0]
+
+  def _hold(a: np.ndarray) -> np.ndarray:
+    return np.repeat(a[None], num_frames, axis=0)
+
+  return {
+    "fps": np.asarray([output_fps]),
+    "joint_pos": _hold(jp),
+    "joint_vel": np.zeros((num_frames, nj), dtype=np.float32),
+    "body_pos_w": _hold(bp),
+    "body_quat_w": _hold(bq),
+    "body_lin_vel_w": np.zeros((num_frames, nb, 3), dtype=np.float32),
+    "body_ang_vel_w": np.zeros((num_frames, nb, 3), dtype=np.float32),
+  }
+
+
 def main(
-  input_dir: str = str(_REPO_ROOT / "trajectories" / "library"),
-  output_dir: str = str(_REPO_ROOT / "trajectories" / "library_tracking"),
+  input_dir: str = str(
+    _REPO_ROOT / "trajectories" / "crawl_ff_loop_180_R_001__A229_library"
+  ),
+  output_dir: str = str(
+    _REPO_ROOT / "trajectories" / "crawl_ff_loop_180_R_001__A229_tracking"
+  ),
   input_fps: float = 200.0,
   output_fps: float = 50.0,
   device: str = "cuda:0",
 ):
   """Convert every ``*.npz`` in ``input_dir`` (mj-nlp ``[qpos|qvel]`` schema) to tracking npz.
 
+  An optional ``qpos_idle.csv`` (one G1 qpos row) is also written as a held speed-0 idle clip.
+
   Args:
-    input_dir: Folder of library clips (e.g. ``trajectories/library``).
+    input_dir: Folder of library clips (e.g.
+      ``trajectories/crawl_ff_loop_180_R_001__A229_library``).
     output_dir: Where to write the tracking-format clips (basename preserved).
     input_fps: Sample rate of the library clips (200 Hz for the mj-nlp crawl library).
     output_fps: Output rate; MUST equal the env control rate 1/step_dt (50 Hz).
@@ -155,18 +267,46 @@ def main(
   joint_indexes = robot.find_joints(list(JOINT_NAMES), preserve_order=True)[0]
 
   print(f"converting {len(files)} clip(s): {input_fps:g} Hz -> {output_fps:g} Hz")
+  num_frames = 0
   for f in files:
     motion = LibraryMotionLoader(
-      motion_file=f, input_fps=int(input_fps), output_fps=int(output_fps), device=sim.device
+      motion_file=f,
+      input_fps=int(input_fps),
+      output_fps=int(output_fps),
+      device=sim.device,
     )
     log = _replay_to_log(sim, scene, robot, joint_indexes, motion)
+    num_frames = log["joint_pos"].shape[0]
     out_path = os.path.join(output_dir, os.path.basename(f))
     np.savez(out_path, **log)
     print(
       f"  {os.path.basename(f)} -> joint_pos {log['joint_pos'].shape}, "
       f"body_pos_w {log['body_pos_w'].shape}  saved to {out_path}"
     )
-  print(f"done: {len(files)} clip(s) in {output_dir}")
+
+  # Optional static idle pose -> a held, zero-velocity speed-0 clip. Every clip in a library must
+  # share the same frame count, so the idle is held for the crawl clips' output length.
+  idle_csv = os.path.join(input_dir, _IDLE_CSV)
+  has_idle = os.path.exists(idle_csv)
+  if has_idle:
+    idle_qpos = np.loadtxt(idle_csv, delimiter=",")
+    log = _idle_to_log(
+      sim, scene, robot, joint_indexes, idle_qpos, num_frames, int(output_fps)
+    )
+    out_path = os.path.join(output_dir, _IDLE_OUT)
+    np.savez(out_path, **log)
+    print(
+      f"  {_IDLE_CSV} -> {_IDLE_OUT} (static, held {num_frames} frames, v=0)  "
+      f"saved to {out_path}"
+    )
+  else:
+    print(
+      f"  [note] no {_IDLE_CSV} in {input_dir}; skipping idle clip "
+      "(zero-velocity commands will snap to the slowest crawl clip instead)."
+    )
+
+  n_out = len(files) + (1 if has_idle else 0)
+  print(f"done: {n_out} clip(s) in {output_dir}")
 
 
 if __name__ == "__main__":
