@@ -271,7 +271,7 @@ These options apply to both the motion tracking and velocity playback commands a
 - `--device` overrides the compute device (e.g. `cpu`, `cuda:0`).
 
 ## Contact-Rich Locomotion
-Contact-rich locomotion (e.g. crawling) tracks a *library* of periodic clips — one per forward speed — instead of a single motion, and a commanded speed selects the nearest clip at runtime (see `Mjlab-Crawling-NoStopping-Flat-Unitree-G1`).
+Contact-rich locomotion (e.g. crawling) tracks a *library* of periodic clips — one per forward speed — instead of a single motion, and a commanded speed selects the nearest clip at runtime (see `G1-Crawling-NoStopping`).
 
 ### Parse the Gait Library
 The library ships as raw solver output: one `.npz` per speed storing per-frame full MuJoCo state `[qpos | qvel]`, named so the speed is parsable from the filename (`crawl_vp0_280` → +0.28 m/s). Convert the whole folder into the tracking-format npz the crawling task loads:

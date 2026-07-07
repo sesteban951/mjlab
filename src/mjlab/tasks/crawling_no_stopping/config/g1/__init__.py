@@ -5,7 +5,7 @@ from .env_cfgs import unitree_g1_crawling_flat_env_cfg
 from .rl_cfg import unitree_g1_crawling_ppo_runner_cfg
 
 register_mjlab_task(
-  task_id="Mjlab-Crawling-V1-Flat-Unitree-G1",
+  task_id="G1-Crawling-NoStopping",
   env_cfg=unitree_g1_crawling_flat_env_cfg(),
   play_env_cfg=unitree_g1_crawling_flat_env_cfg(play=True),
   rl_cfg=unitree_g1_crawling_ppo_runner_cfg(),

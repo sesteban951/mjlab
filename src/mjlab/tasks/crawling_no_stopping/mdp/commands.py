@@ -33,7 +33,9 @@ _SPEED_RE = re.compile(r"_v([pm])(\d+)_(\d+)")
 def _parse_speed(filename: str) -> float:
   m = _SPEED_RE.search(os.path.basename(filename))
   if m is None:
-    raise ValueError(f"cannot parse speed from filename: {filename!r} (expected '..._v[p|m]I_FFF.npz')")
+    raise ValueError(
+      f"cannot parse speed from filename: {filename!r} (expected '..._v[p|m]I_FFF.npz')"
+    )
   sign = 1.0 if m.group(1) == "p" else -1.0
   return sign * (int(m.group(2)) + int(m.group(3)) / 1000.0)
 
@@ -45,7 +47,9 @@ class LibraryMotionLoader:
   body_{pos,quat,lin_vel,ang_vel}_w), but every array gains a leading ``(S,)`` dimension and the
   clips are sorted by ascending speed (parsed from the filename)."""
 
-  def __init__(self, motion_dir: str, body_indexes: torch.Tensor, device: str = "cpu") -> None:
+  def __init__(
+    self, motion_dir: str, body_indexes: torch.Tensor, device: str = "cpu"
+  ) -> None:
     files = sorted(glob.glob(os.path.join(motion_dir, "*.npz")))
     if not files:
       raise FileNotFoundError(f"no .npz clips found in motion_dir: {motion_dir}")
@@ -96,7 +100,17 @@ class LibraryMotionCommand(MotionCommand):
       device=self.device,
     )
 
-    self.motion = LibraryMotionLoader(cfg.motion_dir, self.body_indexes, device=self.device)
+    self.motion = LibraryMotionLoader(
+      cfg.motion_dir, self.body_indexes, device=self.device
+    )
+
+    # A positive stop threshold pins low commands to speed 0, so the library MUST contain a
+    # speed-0 (idle) clip for them to snap to (see scripts/library_to_npz.py's qpos_idle handling).
+    if cfg.stop_speed_threshold > 0.0:
+      assert bool(torch.any(self.motion.lib_speeds.abs() < 1e-4)), (
+        "stop_speed_threshold > 0 requires a speed-0 idle clip in motion_dir "
+        f"(e.g. crawl_vp0_000.npz); found speeds {self.motion.lib_speeds.tolist()}"
+      )
 
     self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.speed_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
@@ -111,8 +125,12 @@ class LibraryMotionCommand(MotionCommand):
     self.body_quat_relative_w[:, :, 0] = 1.0
 
     self.bin_count = int(self.motion.time_step_total // (1 / env.step_dt)) + 1
-    self.bin_failed_count = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
-    self._current_bin_failed = torch.zeros(self.bin_count, dtype=torch.float, device=self.device)
+    self.bin_failed_count = torch.zeros(
+      self.bin_count, dtype=torch.float, device=self.device
+    )
+    self._current_bin_failed = torch.zeros(
+      self.bin_count, dtype=torch.float, device=self.device
+    )
     self.kernel = torch.tensor(
       [self.cfg.adaptive_lambda**i for i in range(self.cfg.adaptive_kernel_size)],
       device=self.device,
@@ -120,9 +138,17 @@ class LibraryMotionCommand(MotionCommand):
     self.kernel = self.kernel / self.kernel.sum()
 
     for key in (
-      "error_anchor_pos", "error_anchor_rot", "error_anchor_lin_vel", "error_anchor_ang_vel",
-      "error_body_pos", "error_body_rot", "error_joint_pos", "error_joint_vel",
-      "sampling_entropy", "sampling_top1_prob", "sampling_top1_bin",
+      "error_anchor_pos",
+      "error_anchor_rot",
+      "error_anchor_lin_vel",
+      "error_anchor_ang_vel",
+      "error_body_pos",
+      "error_body_rot",
+      "error_joint_pos",
+      "error_joint_vel",
+      "sampling_entropy",
+      "sampling_top1_prob",
+      "sampling_top1_bin",
     ):
       self.metrics[key] = torch.zeros(self.num_envs, device=self.device)
 
@@ -132,9 +158,15 @@ class LibraryMotionCommand(MotionCommand):
   # --- speed sampling ---------------------------------------------------------------------------
 
   def _resample_speed(self, env_ids: torch.Tensor) -> None:
-    """Sample a target forward speed per env and snap it to the nearest library clip."""
+    """Sample a target forward speed per env and snap it to the nearest library clip.
+
+    Commands below ``stop_speed_threshold`` are pinned to exactly 0 so they snap to the idle clip
+    and the commanded-speed observation / forward-speed reward agree with the static reference
+    (i.e. reward holding still, not creeping). With the default threshold of 0 nothing is pinned.
+    """
     lo, hi = self.cfg.speed_command_range
     v = sample_uniform(lo, hi, (len(env_ids),), device=self.device)
+    v = torch.where(v < self.cfg.stop_speed_threshold, torch.zeros_like(v), v)
     self.speed_command[env_ids] = v
     self.speed_idx[env_ids] = torch.argmin(
       torch.abs(self.motion.lib_speeds[None, :] - v[:, None]), dim=1
@@ -177,13 +209,17 @@ class LibraryMotionCommand(MotionCommand):
   @property
   def anchor_pos_w(self) -> torch.Tensor:
     return (
-      self.motion.body_pos_w[self.speed_idx, self.time_steps, self.motion_anchor_body_index]
+      self.motion.body_pos_w[
+        self.speed_idx, self.time_steps, self.motion_anchor_body_index
+      ]
       + self._env.scene.env_origins
     )
 
   @property
   def anchor_quat_w(self) -> torch.Tensor:
-    return self.motion.body_quat_w[self.speed_idx, self.time_steps, self.motion_anchor_body_index]
+    return self.motion.body_quat_w[
+      self.speed_idx, self.time_steps, self.motion_anchor_body_index
+    ]
 
   @property
   def anchor_lin_vel_w(self) -> torch.Tensor:
@@ -207,7 +243,12 @@ class LibraryMotionCommandCfg(MotionCommandCfg):
 
   motion_dir: str = ""
   speed_command_range: tuple[float, float] = (0.08, 0.40)
-  motion_file: str = ""  # unused (LibraryMotionLoader reads motion_dir); keep to satisfy the base
+  # Commands below this are pinned to 0 -> the idle clip (a static, zero-velocity rest). 0 disables
+  # (no stop band); requires a speed-0 clip in motion_dir when > 0.
+  stop_speed_threshold: float = 0.0
+  motion_file: str = (
+    ""  # unused (LibraryMotionLoader reads motion_dir); keep to satisfy the base
+  )
 
   def build(self, env: ManagerBasedRlEnv) -> LibraryMotionCommand:
     return LibraryMotionCommand(self, env)

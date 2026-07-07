@@ -1,10 +1,10 @@
-"""Unitree G1 crawling v1: gait-library tracking with a REFERENCE-FREE actor.
+"""Unitree G1 crawling (no-stopping): gait-library tracking with a REFERENCE-FREE actor.
 
-Identical to crawling_v0 (contact-rich G1 tracking env + speed-indexed gait-library command),
-except the target-motion reference is removed from the ACTOR observation group. The library is
-still used -- the imitation reward tracks it (that is what teaches the crawl) and the critic
-still sees the full reference (asymmetric actor/critic) -- but the deployed policy sees only
-proprioception + phase + the single forward-speed command, so no reference is fed in at runtime.
+Contact-rich G1 tracking env + speed-indexed gait-library command, with the target-motion
+reference removed from the ACTOR observation group. The library is still used -- the imitation
+reward tracks it (that is what teaches the crawl) and the critic still sees the full reference
+(asymmetric actor/critic) -- but the deployed policy sees only proprioception + phase + the
+single forward-speed command, so no reference is fed in at runtime.
 """
 
 from dataclasses import replace
@@ -14,15 +14,19 @@ import mjlab
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
-from mjlab.tasks.crawling_v1 import mdp
-from mjlab.tasks.crawling_v1.mdp.commands import LibraryMotionCommandCfg
+from mjlab.tasks.crawling_no_stopping import mdp
+from mjlab.tasks.crawling_no_stopping.mdp.commands import LibraryMotionCommandCfg
 from mjlab.tasks.tracking.config.g1_custom_contactrich.env_cfgs import (
   unitree_g1_custom_contactrich_flat_tracking_env_cfg,
 )
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 # The converted tracking-format crawl library (produced by scripts/library_to_npz.py).
-MOTION_DIR = str(Path(mjlab.MJLAB_SRC_PATH).parent.parent / "trajectories" / "library_tracking")
+MOTION_DIR = str(
+  Path(mjlab.MJLAB_SRC_PATH).parent.parent
+  / "trajectories"
+  / "crawl_ff_loop_180_R_001__A229_tracking"
+)
 
 # Commanded forward-speed range (matches the library span 0.08-0.40 m/s).
 SPEED_RANGE = (0.08, 0.40)
@@ -62,13 +66,17 @@ def unitree_g1_crawling_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg
   )
 
   # --- observations: tell the policy the commanded speed (+ a phase clock), no noise ---
-  speed_obs = ObservationTermCfg(func=mdp.commanded_speed, params={"command_name": "motion"})
-  phase_obs = ObservationTermCfg(func=mdp.motion_phase, params={"command_name": "motion"})
+  speed_obs = ObservationTermCfg(
+    func=mdp.commanded_speed, params={"command_name": "motion"}
+  )
+  phase_obs = ObservationTermCfg(
+    func=mdp.motion_phase, params={"command_name": "motion"}
+  )
   for group in ("actor", "critic"):
     cfg.observations[group].terms["commanded_speed"] = replace(speed_obs)
     cfg.observations[group].terms["motion_phase"] = replace(phase_obs)
 
-  # --- v1: strip the target-motion reference from the ACTOR only (keep it in the critic) ---
+  # --- strip the target-motion reference from the ACTOR only (keep it in the critic) ---
   # The actor now sees only proprioception + phase + commanded speed; the critic keeps the full
   # reference (asymmetric). The library still drives learning via the imitation reward.
   for ref_term in ("command", "motion_anchor_ori_b"):

@@ -6,5 +6,5 @@ from mjlab.tasks.tracking.config.g1.rl_cfg import unitree_g1_tracking_ppo_runner
 
 def unitree_g1_crawling_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   cfg = unitree_g1_tracking_ppo_runner_cfg()
-  cfg.experiment_name = "g1_crawling_v1"
+  cfg.experiment_name = "g1_crawling_no_stopping"
   return cfg
