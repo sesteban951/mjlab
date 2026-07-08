@@ -51,6 +51,11 @@ def unitree_g1_crawling_fwd_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     has_state_estimation=False, play=play
   )
 
+  # Contact-rich crawling puts the whole body on the ground (condim=3 -> 3 constraint rows per
+  # contact), so the per-env active-constraint count (nefc) exceeds the mujoco-warp default njmax
+  # and constraints get dropped ("nefc overflow"). Give a comfortable cap with headroom for pile-ups.
+  cfg.sim.njmax = 512
+
   # --- swap the single-clip motion command for the twist-indexed library command ---
   # Copy the (already play-adjusted) MotionCommandCfg fields into a LibraryMotionCommandCfg.
   old = cfg.commands["motion"]
