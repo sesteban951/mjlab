@@ -8,10 +8,13 @@ body_ang_vel_w``). This script FK-replays each clip through the mjlab G1 scene t
 schema, reusing csv_to_npz's finite-difference velocity recompute + FK logging, and writes one
 tracking npz per clip to disk (no Weights & Biases).
 
+Each source clip carries a ``twist`` field (``[vx, vy, wz]`` in m/s, m/s, rad/s) and an optional
+``nominal_speed``; both are copied into the tracking npz so the command can select clips by twist.
+
 If the input dir also contains ``qpos_idle.csv`` (one G1 qpos row), it is FK-replayed and written
-as a held, zero-velocity speed-0 clip (``crawl_vp0_000.npz``) so the policy has an explicit static
-pose to track when commanded to stop. It is optional -- absent, zero-velocity commands just snap to
-the slowest crawl clip. Run once:
+as a held, zero-velocity clip (``crawl_fwd_vx_000.npz``) with twist ``[0, 0, 0]`` so the policy has
+an explicit static pose to track when commanded to stop. It is optional -- absent, near-zero twist
+commands just snap to the slowest crawl clip. Run once:
 
   uv run python -m mjlab.scripts.library_to_npz
 
@@ -80,11 +83,40 @@ _LOG_KEYS = (
 )
 
 # A single-row qpos CSV (``[base_pos(3) | base_quat(4, wxyz) | dof_pos(29)]``) placed in the input
-# dir is converted to a held, zero-velocity clip so the policy has an explicit pose to track at
-# zero commanded speed. The output name parses to speed 0.0 (see ``_parse_speed`` in the command),
-# so ``LibraryMotionLoader`` picks it up as the speed-0 clip with no command-side changes.
+# dir is converted to a held, zero-velocity clip so the policy has an explicit pose to track when
+# commanded to stop. It is written with a zero twist ``[vx, vy, wz] = [0, 0, 0]`` so the command's
+# ``LibraryMotionLoader`` picks it up as the stop clip (nearest to a zero twist command).
 _IDLE_CSV = "qpos_idle.csv"
-_IDLE_OUT = "crawl_vp0_000.npz"
+_IDLE_OUT = "crawl_fwd_vx_000.npz"
+
+
+def _yaw_about_z(quat_wxyz: np.ndarray) -> float:
+  """Heading (yaw about world z) of a wxyz quaternion via swing-twist decomposition."""
+  w, _, _, z = (float(v) for v in quat_wxyz)
+  if w < 0.0:  # pick the hemisphere so the twist angle is continuous
+    w, z = -w, -z
+  return 2.0 * float(np.arctan2(z, w))
+
+
+def _quat_mul(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+  """Hamilton product of two wxyz quaternions."""
+  aw, ax, ay, az = a
+  bw, bx, by, bz = b
+  return np.array(
+    [
+      aw * bw - ax * bx - ay * by - az * bz,
+      aw * bx + ax * bw + ay * bz - az * by,
+      aw * by - ax * bz + ay * bw + az * bx,
+      aw * bz + ax * by - ay * bx + az * bw,
+    ],
+    dtype=np.float64,
+  )
+
+
+def _apply_yaw_about_z(quat_wxyz: np.ndarray, dyaw: float) -> np.ndarray:
+  """Rotate a wxyz quaternion by ``dyaw`` about the world z axis (world-frame pre-multiply)."""
+  qz = np.array([np.cos(dyaw / 2.0), 0.0, 0.0, np.sin(dyaw / 2.0)], dtype=np.float64)
+  return _quat_mul(qz, quat_wxyz)
 
 
 class LibraryMotionLoader(MotionLoader):
@@ -221,6 +253,8 @@ def _idle_to_log(
     "body_quat_w": _hold(bq),
     "body_lin_vel_w": np.zeros((num_frames, nb, 3), dtype=np.float32),
     "body_ang_vel_w": np.zeros((num_frames, nb, 3), dtype=np.float32),
+    "twist": np.zeros(3, dtype=np.float32),  # [vx, vy, wz] = 0 -> the stop clip
+    "nominal_speed": np.asarray(0.0, dtype=np.float32),
   }
 
 
@@ -276,6 +310,13 @@ def main(
       device=sim.device,
     )
     log = _replay_to_log(sim, scene, robot, joint_indexes, motion)
+    # Carry the per-clip command labels through so the tracking command can select by twist.
+    src = np.load(f)
+    log["twist"] = np.asarray(
+      src["twist"], dtype=np.float32
+    )  # [vx, vy, wz] m/s,m/s,rad/s
+    if "nominal_speed" in src:
+      log["nominal_speed"] = np.asarray(src["nominal_speed"], dtype=np.float32)
     num_frames = log["joint_pos"].shape[0]
     out_path = os.path.join(output_dir, os.path.basename(f))
     np.savez(out_path, **log)
@@ -284,12 +325,26 @@ def main(
       f"body_pos_w {log['body_pos_w'].shape}  saved to {out_path}"
     )
 
-  # Optional static idle pose -> a held, zero-velocity speed-0 clip. Every clip in a library must
+  # Optional static idle pose -> a held, zero-velocity zero-twist clip. Every clip in a library must
   # share the same frame count, so the idle is held for the crawl clips' output length.
   idle_csv = os.path.join(input_dir, _IDLE_CSV)
   has_idle = os.path.exists(idle_csv)
   if has_idle:
     idle_qpos = np.loadtxt(idle_csv, delimiter=",")
+    # Align the idle pose's heading (yaw about world z) to the crawl clips, so a crawl<->idle
+    # transition is a posture change only, not a spurious ~50 deg yaw rotation. All crawl clips
+    # share one heading; use the first clip as the reference.
+    ref_yaw = _yaw_about_z(np.load(files[0])["state"][0, 3:7])
+    idle_yaw = _yaw_about_z(idle_qpos[3:7])
+    dyaw = ref_yaw - idle_yaw
+    idle_qpos[3:7] = _apply_yaw_about_z(idle_qpos[3:7], dyaw)
+    c, s = np.cos(dyaw), np.sin(dyaw)
+    x, y = float(idle_qpos[0]), float(idle_qpos[1])
+    idle_qpos[0], idle_qpos[1] = c * x - s * y, s * x + c * y
+    print(
+      f"  idle yaw-aligned to crawl heading: {np.degrees(idle_yaw):+.1f} -> "
+      f"{np.degrees(ref_yaw):+.1f} deg (dyaw {np.degrees(dyaw):+.1f})"
+    )
     log = _idle_to_log(
       sim, scene, robot, joint_indexes, idle_qpos, num_frames, int(output_fps)
     )
