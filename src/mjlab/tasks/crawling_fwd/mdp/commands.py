@@ -118,6 +118,11 @@ class LibraryMotionCommand(MotionCommand):
     # RSI (reference-state init) is applied only when resampling at an episode reset, not on the
     # mid-episode timer resample -- so the robot physically transitions between twists.
     self._rsi_on_resample = False
+    # Egocentric path target for the position cost. The clip's absolute anchor position is a forward
+    # sawtooth (resets each loop), so tracking it fights net progress. Instead we advance this target
+    # by the reference anchor velocity (smooth, periodic) and re-base it to the robot at each twist
+    # resample -- so the position cost measures path deviation without punishing forward progress.
+    self.ref_anchor_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
 
     self.body_pos_relative_w = torch.zeros(
       self.num_envs, len(cfg.body_names), 3, device=self.device
@@ -194,6 +199,13 @@ class LibraryMotionCommand(MotionCommand):
     # transitions to the new twist's gait (all gaits share one period, so clip_idx just swaps).
     if self._rsi_on_resample:
       super()._resample_command(env_ids)
+      # Robot was teleported onto the reference: anchor the path target there.
+      self.ref_anchor_pos_w[env_ids] = self.anchor_pos_w[env_ids]
+    else:
+      # Timer resample (no teleport): re-base the horizontal target at the robot so a forward lead
+      # isn't punished, but keep the reference height so the position cost still tracks z.
+      self.ref_anchor_pos_w[env_ids, :2] = self.robot_anchor_pos_w[env_ids, :2]
+      self.ref_anchor_pos_w[env_ids, 2] = self.anchor_pos_w[env_ids, 2]
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     # Episode reset: resample the twist AND RSI the robot into the selected clip's start pose.
@@ -209,6 +221,10 @@ class LibraryMotionCommand(MotionCommand):
     self.time_steps += 1
     self.time_steps %= self.motion.time_step_total
     self.update_relative_body_poses()
+    # Advance the egocentric path target by the reference anchor velocity (smooth & periodic, so it
+    # does NOT sawtooth like the clip's absolute position). Idle clips have zero velocity -> the
+    # target holds, so the position cost still pins the idle pose in place.
+    self.ref_anchor_pos_w += self.anchor_lin_vel_w * self._env.step_dt
     if self.cfg.sampling_mode == "adaptive":
       self.bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_bin_failed

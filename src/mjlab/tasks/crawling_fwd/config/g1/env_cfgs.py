@@ -113,4 +113,15 @@ def unitree_g1_crawling_fwd_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     params={"command_name": "motion", "std": 0.1},
   )
 
+  # --- position cost: replace the base ABSOLUTE anchor-position reward with an egocentric,
+  # path-following one. The clip's absolute position is a forward sawtooth (resets each loop), so
+  # tracking it punishes net progress; the egocentric target advances with the reference velocity and
+  # re-bases to the robot on resample, so it keeps a real position cost without fighting forward
+  # motion. Same weight/std as the base term it replaces.
+  cfg.rewards["motion_global_root_pos"] = RewardTermCfg(
+    func=mdp.egocentric_anchor_position_error_exp,
+    weight=0.5,
+    params={"command_name": "motion", "std": 0.3},
+  )
+
   return cfg

@@ -35,3 +35,19 @@ def twist_tracking(
   return torch.exp(
     -torch.sum(torch.square(achieved - cmd.twist_command), dim=-1) / (std**2)
   )
+
+
+def egocentric_anchor_position_error_exp(
+  env: ManagerBasedRlEnv, command_name: str, std: float
+) -> torch.Tensor:
+  """exp(-||ref_anchor_pos_w - robot_anchor_pos_w||^2 / std^2).
+
+  Unlike ``motion_global_anchor_position_error_exp`` (which tracks the clip's ABSOLUTE world
+  position -- a forward sawtooth that resets each loop and so penalizes net progress),
+  ``ref_anchor_pos_w`` is an egocentric path target: re-based to the robot at each twist resample and
+  advanced by the reference anchor velocity. It penalizes drifting off the intended path (lateral
+  slip, forward lag, wrong height) without punishing forward progress.
+  """
+  cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
+  error = torch.sum(torch.square(cmd.ref_anchor_pos_w - cmd.robot_anchor_pos_w), dim=-1)
+  return torch.exp(-error / std**2)
