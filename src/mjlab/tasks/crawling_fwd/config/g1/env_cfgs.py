@@ -14,6 +14,8 @@ phase + the commanded twist.
 from dataclasses import replace
 from pathlib import Path
 
+import numpy as np
+
 import mjlab
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
@@ -31,6 +33,65 @@ MOTION_DIR = str(
   / "trajectories"
   / "crawl_ff_loop_180_R_001__A229_tracking"
 )
+
+# Idle crawl pose used as the robot's default joint angles (source of truth: the same qpos_idle.csv
+# that becomes the zero-twist clip). Columns 7:36 are the 29 actuated-joint angles in
+# ``_IDLE_JOINT_ORDER`` (== the qpos joint order used by scripts/library_to_npz.py).
+IDLE_QPOS_CSV = (
+  Path(mjlab.MJLAB_SRC_PATH).parent.parent
+  / "trajectories"
+  / "crawl_ff_loop_180_R_001__A229_library"
+  / "qpos_idle.csv"
+)
+# G1 actuated-joint order for qpos_idle.csv columns 7:36. MUST match scripts/library_to_npz.py's
+# JOINT_NAMES (the order the pose was written in); a mismatch silently scrambles the default pose.
+_IDLE_JOINT_ORDER = (
+  "left_hip_pitch_joint",
+  "left_hip_roll_joint",
+  "left_hip_yaw_joint",
+  "left_knee_joint",
+  "left_ankle_pitch_joint",
+  "left_ankle_roll_joint",
+  "right_hip_pitch_joint",
+  "right_hip_roll_joint",
+  "right_hip_yaw_joint",
+  "right_knee_joint",
+  "right_ankle_pitch_joint",
+  "right_ankle_roll_joint",
+  "waist_yaw_joint",
+  "waist_roll_joint",
+  "waist_pitch_joint",
+  "left_shoulder_pitch_joint",
+  "left_shoulder_roll_joint",
+  "left_shoulder_yaw_joint",
+  "left_elbow_joint",
+  "left_wrist_roll_joint",
+  "left_wrist_pitch_joint",
+  "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint",
+  "right_shoulder_roll_joint",
+  "right_shoulder_yaw_joint",
+  "right_elbow_joint",
+  "right_wrist_roll_joint",
+  "right_wrist_pitch_joint",
+  "right_wrist_yaw_joint",
+)
+
+
+def _idle_default_joint_pos() -> dict[str, float]:
+  """Idle crawl joint angles (rad), keyed by joint name, from qpos_idle.csv columns 7:36.
+
+  Used as the robot's ``default_joint_pos`` so the joint-position action
+  (``target = default + 0.5*action``) is centered on the crawl operating range rather than the
+  standing home pose.
+  """
+  qpos = np.loadtxt(IDLE_QPOS_CSV, delimiter=",").reshape(-1)
+  joints = qpos[7:36]
+  assert len(joints) == len(_IDLE_JOINT_ORDER), (
+    f"qpos_idle.csv has {len(joints)} joint columns, expected {len(_IDLE_JOINT_ORDER)}"
+  )
+  return {name: float(v) for name, v in zip(_IDLE_JOINT_ORDER, joints, strict=True)}
+
 
 # Commanded twist [(vx_lo, vx_hi), (vy..), (wz..)]. Moving commands span the forward library
 # (~0.11-0.26 m/s); vy/wz stay 0 until the grid adds those clips. The idle/static pose is not part
@@ -55,6 +116,18 @@ def unitree_g1_crawling_fwd_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # contact), so the per-env active-constraint count (nefc) exceeds the mujoco-warp default njmax
   # and constraints get dropped ("nefc overflow"). Give a comfortable cap with headroom for pile-ups.
   cfg.sim.njmax = 512
+
+  # --- re-center the action space on the crawl posture ---
+  # The joint-position action is applied as ``target = default_joint_pos + 0.5*action``
+  # (use_default_offset), so the default joint angles set where a zero action sits. The stock G1
+  # default is a STANDING pose, far from crawling (some joints need a constant action of ~5 just to
+  # reach the crawl posture), which wastes action authority. Use the idle crawl pose so a zero
+  # action already sits in a valid crawl configuration and the policy only learns small oscillations.
+  # Scoped to this env: the shared g1_constants default is untouched.
+  robot_cfg = cfg.scene.entities["robot"]
+  robot_cfg.init_state = replace(
+    robot_cfg.init_state, joint_pos=_idle_default_joint_pos()
+  )
 
   # --- swap the single-clip motion command for the twist-indexed library command ---
   # Copy the (already play-adjusted) MotionCommandCfg fields into a LibraryMotionCommandCfg.
