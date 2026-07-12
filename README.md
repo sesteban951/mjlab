@@ -292,3 +292,98 @@ where:
 - `--output-fps` is the fps for training; it MUST equal the env control rate `1/step_dt` (50 Hz).
 
 The `--input-dir`/`--output-dir` defaults already point at the shipped library, so you can run it with no flags to regenerate the tracking clips.
+
+## Crawling Gait Libraries & Environments
+
+The crawling tasks train a **twist-conditioned** policy that imitates a *library* of periodic crawl
+gaits, each labeled with a planar twist `[vx, vy, wz]` (m/s, m/s, rad/s). At runtime the commanded
+twist snaps to the nearest library clip and the policy tracks it; the deployed actor is
+**reference-free** (sees only proprioception + a phase clock + the commanded twist) while the critic
+keeps the full reference. A fraction of envs command a zero twist and snap to a static **idle** clip
+(the stop pose). The crawling envs all share the same contact-rich physics and reward setup, and
+differ only in *how the twist is sampled* and *which library they load*.
+
+### Gait library creation
+
+Libraries are built in two layers:
+
+1. **Master grids** — produced by the gait optimizer (mj-nlp `g1_gait_library.py`), one folder per
+   motion family under `mj-nlp/examples/g1_gait/`: `gait_library_crawl_{fwd,bck,turn_pos,turn_neg}`.
+   Each is a grid of periodic gaits solved at a **common period**, every clip storing full MuJoCo
+   state `[qpos | qvel]` and its `[vx, vy, wz]` twist label.
+2. **Per-controller tracking libraries** — what an env actually loads: a curated subset of the
+   master grids, converted to tracking-format npz (per-body world kinematics). Each controller
+   declares its selection once, in the central registry
+   `src/mjlab/tasks/crawling_common/library.py`:
+
+```python
+LIBRARY_SPECS = {
+  "omni":      LibrarySpec(name="omni", sources=(Source("crawl_fwd"),)),
+  "diffdrive": LibrarySpec(name="diffdrive", sources=(
+     Source("crawl_fwd", keep={"vy": 0.0, "wz": 0.0}),    # straight forward column
+     Source("crawl_bck", keep={"vy": 0.0, "wz": 0.0}),    # straight backward column
+     Source("crawl_turn_pos"), Source("crawl_turn_neg"))),  # in-place turns (whole families)
+}
+```
+
+Each `Source` names a master-grid family plus an optional **axis-equality filter** on the twist
+label (`keep={"vy":0.0,"wz":0.0}` keeps only clips with `vy=wz=0`; `keep={}` takes the whole
+family). Because every gait shares one period, any mix stacks into a single loader.
+
+Build or refresh a controller's tracking library from its spec:
+
+```bash
+# Stage the filtered clips (+ idle) -> FK-convert to tracking npz -> verify.
+uv run python -m mjlab.scripts.build_library diffdrive
+uv run python -m mjlab.scripts.build_library all                     # every registered controller
+uv run python -m mjlab.scripts.build_library omni --no-convert True  # dry-run: print selection only
+```
+
+where:
+- `<controller>` is a key in `LIBRARY_SPECS` (`omni`, `diffdrive`) or `all`.
+- `--gait-root` overrides where the master grids live (default: the sibling `mj-nlp/examples/g1_gait`).
+- `--no-convert True` stages and prints the selection without the (GPU) FK conversion — a fast dry run.
+
+The builder wipes and re-stages `crawl_<name>_library/`, FK-converts it to `crawl_<name>_tracking/`
+(wrapping the lower-level `library_to_npz` above), then checks the clips share one period and include
+an idle clip. Each env reads its `MOTION_DIR` from the **same** spec
+(`LIBRARY_SPECS[name].tracking_dir`), so the selection and the env can never drift. Rerun after the
+master grids change. (`uv run build-library <controller>` also works once `uv sync` has registered
+the console script.)
+
+### Crawling environments
+
+| Task ID | Command space | Library |
+|---|---|---|
+| `G1-Crawling-Fwd` | forward speed `[vx, 0, 0]` + idle stop | 1-D forward vx sweep (`crawl_ff_loop_..._tracking`) |
+| `G1-Crawling-Fwd-Blending` | same as Fwd, with blended clip transitions | same |
+| `G1-Crawling-Omni` | full 3-D twist `[vx, vy, wz]` (forward grid) | `crawl_omni_tracking` |
+| `G1-Crawling-DiffDrive` | differential drive: `[±vx, 0, 0]` **or** `[0, 0, ±wz]` | `crawl_diffdrive_tracking` |
+
+- **`G1-Crawling-Fwd`** — the base twist-library crawler: forward speed only, plus a static idle
+  stop. Uses the original 1-D vx library (built with the manual `library_to_npz` flow above; predates
+  the `LIBRARY_SPECS` registry).
+- **`G1-Crawling-Fwd-Blending`** — identical to Fwd, but on a mid-episode twist resample it
+  interpolates the reference from the outgoing clip to the incoming clip over a short window, so the
+  imitation target is a smooth accel/decel rather than a teleport. The commanded-twist observation
+  still steps at the resample, so the policy learns an intrinsic graceful transition.
+- **`G1-Crawling-Omni`** — opens all three twist axes: forward crawling with lateral and yaw-rate
+  steering, over the full 3-D forward grid. Inherits Blending's transitions.
+- **`G1-Crawling-DiffDrive`** — a tank / differential-drive command: each env either drives
+  **straight** (forward or backward) **or** turns **in place**, never a blended arc and never
+  lateral. The library mixes the pure-forward and pure-backward speed columns with the in-place turn
+  families.
+
+Train (the library is local, so no `--registry-name` is needed — the env resolves its motion dir
+from the spec):
+
+```bash
+uv run train G1-Crawling-DiffDrive \
+  --env.scene.num-envs 4096 \
+  --agent.max-iterations 30001 \
+  --agent.logger tensorboard
+```
+
+Playback follows the same pattern as the tracking Play commands above. For a local checkpoint, also
+pass `--motion-file <that controller's crawl_<name>_tracking dir>` to satisfy the tracking-task
+guard (the library loader reads the directory; the flag just needs to point at an existing path).
