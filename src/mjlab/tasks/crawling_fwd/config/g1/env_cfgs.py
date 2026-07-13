@@ -197,4 +197,15 @@ def unitree_g1_crawling_fwd_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     params={"command_name": "motion", "std": 0.3},
   )
 
+  # --- orientation cost: same egocentric fix as position, for HEADING. The base term tracks the
+  # clip's ABSOLUTE anchor orientation, whose yaw sawtooths each loop for turning gaits and so
+  # cancels net rotation (the robot cycles its limbs but never turns). The egocentric heading target
+  # accumulates the reference yaw rate and re-bases on resample, so net turning is rewarded while
+  # uprightness is still tracked. Same weight/std (0.4) as the base term it replaces.
+  cfg.rewards["motion_global_root_ori"] = RewardTermCfg(
+    func=mdp.egocentric_anchor_orientation_error_exp,
+    weight=0.5,
+    params={"command_name": "motion", "std": 0.4},
+  )
+
   return cfg

@@ -23,7 +23,7 @@ import torch
 
 from mjlab.managers import CommandTerm
 from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg
-from mjlab.utils.lab_api.math import sample_uniform
+from mjlab.utils.lab_api.math import quat_box_plus, sample_uniform
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -123,6 +123,13 @@ class LibraryMotionCommand(MotionCommand):
     # by the reference anchor velocity (smooth, periodic) and re-base it to the robot at each twist
     # resample -- so the position cost measures path deviation without punishing forward progress.
     self.ref_anchor_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
+    # Egocentric HEADING target for the orientation cost -- the yaw analog of ref_anchor_pos_w. The
+    # clip's absolute anchor orientation sawtooths in yaw each loop (a turn advances heading by wz*T
+    # then wraps back), so tracking it fights net rotation. Instead we advance this target by the
+    # reference anchor angular velocity and re-base it to the robot at each resample, so the
+    # orientation cost measures heading error without punishing net turning.
+    self.ref_anchor_quat_w = torch.zeros(self.num_envs, 4, device=self.device)
+    self.ref_anchor_quat_w[:, 0] = 1.0
 
     self.body_pos_relative_w = torch.zeros(
       self.num_envs, len(cfg.body_names), 3, device=self.device
@@ -199,13 +206,17 @@ class LibraryMotionCommand(MotionCommand):
     # transitions to the new twist's gait (all gaits share one period, so clip_idx just swaps).
     if self._rsi_on_resample:
       super()._resample_command(env_ids)
-      # Robot was teleported onto the reference: anchor the path target there.
+      # Robot was teleported onto the reference: anchor the path + heading targets there.
       self.ref_anchor_pos_w[env_ids] = self.anchor_pos_w[env_ids]
+      self.ref_anchor_quat_w[env_ids] = self.anchor_quat_w[env_ids]
     else:
       # Timer resample (no teleport): re-base the horizontal target at the robot so a forward lead
       # isn't punished, but keep the reference height so the position cost still tracks z.
       self.ref_anchor_pos_w[env_ids, :2] = self.robot_anchor_pos_w[env_ids, :2]
       self.ref_anchor_pos_w[env_ids, 2] = self.anchor_pos_w[env_ids, 2]
+      # Re-base the heading target at the robot's current orientation so a turn already made isn't
+      # punished; net yaw then accumulates from here via the reference angular velocity.
+      self.ref_anchor_quat_w[env_ids] = self.robot_anchor_quat_w[env_ids]
 
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     # Episode reset: resample the twist AND RSI the robot into the selected clip's start pose.
@@ -225,6 +236,12 @@ class LibraryMotionCommand(MotionCommand):
     # does NOT sawtooth like the clip's absolute position). Idle clips have zero velocity -> the
     # target holds, so the position cost still pins the idle pose in place.
     self.ref_anchor_pos_w += self.anchor_lin_vel_w * self._env.step_dt
+    # Advance the heading target by the reference anchor angular velocity (world frame). quat_box_plus
+    # left-multiplies exp(w*dt) onto the target; idle clips have w=0 so it holds. Non-sawtooth -> net
+    # yaw accumulates, unlike the clip's absolute (looping) heading.
+    self.ref_anchor_quat_w = quat_box_plus(
+      self.ref_anchor_quat_w, self.anchor_ang_vel_w * self._env.step_dt
+    )
     if self.cfg.sampling_mode == "adaptive":
       self.bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_bin_failed

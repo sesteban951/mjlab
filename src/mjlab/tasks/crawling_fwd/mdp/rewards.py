@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, cast
 
 import torch
 
+from mjlab.utils.lab_api.math import quat_error_magnitude
+
 from .commands import LibraryMotionCommand
 
 if TYPE_CHECKING:
@@ -50,4 +52,21 @@ def egocentric_anchor_position_error_exp(
   """
   cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
   error = torch.sum(torch.square(cmd.ref_anchor_pos_w - cmd.robot_anchor_pos_w), dim=-1)
+  return torch.exp(-error / std**2)
+
+
+def egocentric_anchor_orientation_error_exp(
+  env: ManagerBasedRlEnv, command_name: str, std: float
+) -> torch.Tensor:
+  """exp(-quat_error(ref_anchor_quat_w, robot_anchor_quat_w)^2 / std^2).
+
+  Orientation analog of ``egocentric_anchor_position_error_exp``. Unlike
+  ``motion_global_anchor_orientation_error_exp`` (which tracks the clip's ABSOLUTE anchor
+  orientation -- whose yaw sawtooths each loop for turning gaits, so net rotation is penalized),
+  ``ref_anchor_quat_w`` is an egocentric heading target: re-based to the robot at each resample and
+  advanced by the reference anchor angular velocity. It penalizes heading error (and keeps
+  uprightness) without punishing net turning.
+  """
+  cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
+  error = quat_error_magnitude(cmd.ref_anchor_quat_w, cmd.robot_anchor_quat_w) ** 2
   return torch.exp(-error / std**2)
