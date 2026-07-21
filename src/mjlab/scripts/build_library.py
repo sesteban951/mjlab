@@ -66,7 +66,9 @@ def _verify(spec: LibrarySpec) -> None:
   )
 
 
-def build(spec: LibrarySpec, gait_root: Path, idle_csv: Path, convert: bool = True) -> None:
+def build(
+  spec: LibrarySpec, gait_root: Path, idle_csv: Path, convert: bool = True
+) -> None:
   """Stage the spec's filtered clip selection (+ idle) and (optionally) FK-convert to tracking npz."""
   print(f"\n== library '{spec.name}' -> {spec.tracking_dir.name} ==")
   lib = spec.library_dir

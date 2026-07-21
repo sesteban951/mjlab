@@ -35,7 +35,9 @@ def unitree_g1_crawling_omni_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg
   # class, rewards, observations, RSI and blend window are all inherited unchanged.
   cmd = cfg.commands["motion"]
   cmd.motion_dir = MOTION_DIR
-  cmd.motion_file = MOTION_DIR  # unused by the library loader; the tracking-task guard wants a path
+  cmd.motion_file = (
+    MOTION_DIR  # unused by the library loader; the tracking-task guard wants a path
+  )
   cmd.twist_command_range = PLAY_TWIST if play else TWIST_RANGE
   cmd.twist_metric_weights = TWIST_METRIC_WEIGHTS
 

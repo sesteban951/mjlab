@@ -43,7 +43,9 @@ def unitree_g1_crawling_diffdrive_env_cfg(play: bool = False) -> ManagerBasedRlE
   old = cfg.commands["motion"]
   kwargs = {f.name: getattr(old, f.name) for f in fields(old)}
   kwargs["motion_dir"] = MOTION_DIR
-  kwargs["motion_file"] = MOTION_DIR  # unused by the loader; tracking-task guard wants a path
+  kwargs["motion_file"] = (
+    MOTION_DIR  # unused by the loader; tracking-task guard wants a path
+  )
   # twist_command_range is unused by the diffdrive sampler but kept sane for any base-class reads.
   kwargs["twist_command_range"] = (
     (VX_BCK_RANGE[0], VX_FWD_RANGE[1]),
