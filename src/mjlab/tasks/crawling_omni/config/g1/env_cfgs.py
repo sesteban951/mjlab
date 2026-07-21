@@ -18,8 +18,9 @@ from mjlab.tasks.crawling_fwd_blending.config.g1.env_cfgs import (
 # `python -m mjlab.scripts.build_library omni`.
 MOTION_DIR = str(LIBRARY_SPECS["omni"].tracking_dir)
 
-# Commanded twist [(vx_lo, vx_hi), (vy..), (wz..)] -- the full library grid span (m/s, m/s, rad/s).
-TWIST_RANGE = ((0.10, 0.30), (-0.15, 0.15), (-0.15, 0.15))
+# Commanded twist [(vx_lo, vx_hi), (vy..), (wz..)] -- FULL all-directions span (m/s, m/s, rad/s):
+# forward+backward vx, lateral vy, and turn wz up to the in-place turn rate.
+TWIST_RANGE = ((-0.25, 0.30), (-0.12, 0.12), (-0.60, 0.60))
 # Play: pin a single mid-forward, no-steer gait so the reference ghost shows one clean clip.
 PLAY_TWIST = ((0.20, 0.20), (0.0, 0.0), (0.0, 0.0))
 # Nearest-clip metric weights for [vx, vy, wz]. The grid spans are comparable in magnitude

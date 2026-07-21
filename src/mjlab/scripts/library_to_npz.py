@@ -260,10 +260,10 @@ def _idle_to_log(
 
 def main(
   input_dir: str = str(
-    _REPO_ROOT / "trajectories" / "crawl_ff_loop_180_R_001__A229_library"
+    _REPO_ROOT / "trajectories" / "library" / "crawl_ff_loop_180_R_001__A229_library"
   ),
   output_dir: str = str(
-    _REPO_ROOT / "trajectories" / "crawl_ff_loop_180_R_001__A229_tracking"
+    _REPO_ROOT / "trajectories" / "library" / "crawl_ff_loop_180_R_001__A229_tracking"
   ),
   input_fps: float = 200.0,
   output_fps: float = 50.0,

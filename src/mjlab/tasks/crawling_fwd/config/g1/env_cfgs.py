@@ -31,6 +31,7 @@ from mjlab.utils.noise import UniformNoiseCfg as Unoise
 MOTION_DIR = str(
   Path(mjlab.MJLAB_SRC_PATH).parent.parent
   / "trajectories"
+  / "library"
   / "crawl_ff_loop_180_R_001__A229_tracking"
 )
 
@@ -40,6 +41,7 @@ MOTION_DIR = str(
 IDLE_QPOS_CSV = (
   Path(mjlab.MJLAB_SRC_PATH).parent.parent
   / "trajectories"
+  / "library"
   / "crawl_ff_loop_180_R_001__A229_library"
   / "qpos_idle.csv"
 )

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, cast
 
 import torch
 
-from mjlab.utils.lab_api.math import quat_error_magnitude
+from mjlab.utils.lab_api.math import quat_apply, quat_error_magnitude
 
 from .commands import LibraryMotionCommand
 
@@ -22,18 +22,30 @@ if TYPE_CHECKING:
 def twist_tracking(
   env: ManagerBasedRlEnv, command_name: str, std: float
 ) -> torch.Tensor:
-  """exp(-||achieved_twist - commanded_twist||^2 / std^2).
+  """exp(-||achieved_twist - commanded_twist||^2 / std^2), with the achieved planar twist expressed
+  in the robot's HEADING frame so the BODY-frame command ``[vx=forward, vy=lateral, wz=yaw-rate]``
+  (the mj-nlp gait-library convention) is tracked regardless of the robot's absolute heading.
 
-  ``achieved_twist`` is the robot anchor's world-frame planar twist ``[vx_w, vy_w, wz_w]`` (x/y
-  linear vel + z angular vel). This is exact while the gaits share a canonical heading (the current
-  forward + idle library, and any vx/vy grid). NOTE: once turning gaits (wz != 0) rotate the
-  robot's heading mid-episode, world x/y no longer equal body-frame forward/lateral -- revisit to a
-  heading-frame twist then.
+  Measured on the PELVIS (the free-joint root -- the body mj-nlp defined the twist from), NOT the
+  torso anchor (they differ through the waist joints). Heading = azimuth of the pelvis body-Z axis
+  ground projection: in the prone crawl body-x points down and body-z points forward, so this is the
+  crawl heading (base-x / yaw_quat would be wrong here). The world pelvis lin-vel is rotated by
+  Rz(-psi) into that frame; wz is the world-z angular rate (== heading-z on level ground). Without
+  this, a robot correctly executing a turn (net yaw != 0) is penalized because world x/y no longer
+  equal body forward/lateral.
   """
   cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
-  v = cmd.robot_anchor_lin_vel_w  # (N, 3) world linear vel
-  w = cmd.robot_anchor_ang_vel_w  # (N, 3) world angular vel
-  achieved = torch.stack([v[:, 0], v[:, 1], w[:, 2]], dim=-1)  # [vx, vy, wz]
+  data = cmd.robot.data
+  v = data.root_link_lin_vel_w  # (N, 3) PELVIS world linear vel
+  w = data.root_link_ang_vel_w  # (N, 3) PELVIS world angular vel
+  ez = torch.zeros_like(v)
+  ez[:, 2] = 1.0
+  z_w = quat_apply(data.root_link_quat_w, ez)  # pelvis body-Z axis in world
+  psi = torch.atan2(z_w[:, 1], z_w[:, 0])  # crawl heading (ground-projected body-Z azimuth)
+  c, s = torch.cos(psi), torch.sin(psi)
+  vx = c * v[:, 0] + s * v[:, 1]  # world -> heading frame: Rz(-psi) . v_xy
+  vy = -s * v[:, 0] + c * v[:, 1]
+  achieved = torch.stack([vx, vy, w[:, 2]], dim=-1)  # [body-forward, body-lateral, yaw-rate]
   return torch.exp(
     -torch.sum(torch.square(achieved - cmd.twist_command), dim=-1) / (std**2)
   )

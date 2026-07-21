@@ -21,10 +21,11 @@ import mjlab
 # mjlab repo root and its trajectories dir (where the built libraries live).
 _MJLAB_ROOT = Path(mjlab.MJLAB_SRC_PATH).parent.parent
 _TRAJ_DIR = _MJLAB_ROOT / "trajectories"
+_LIB_DIR = _TRAJ_DIR / "library"  # crawl gait libraries (staged + tracking) live here
 # Master gait grids live in the sibling mj-nlp repo (override with build_library --gait-root).
 DEFAULT_GAIT_ROOT = _MJLAB_ROOT.parent / "mj-nlp" / "examples" / "g1_gait"
 # Idle pose -> zero-twist stop clip (same csv used to re-center the crawl action space).
-DEFAULT_IDLE_CSV = _TRAJ_DIR / "crawl_ff_loop_180_R_001__A229_library" / "qpos_idle.csv"
+DEFAULT_IDLE_CSV = _LIB_DIR / "crawl_ff_loop_180_R_001__A229_library" / "qpos_idle.csv"
 
 
 @dataclass(frozen=True)
@@ -54,21 +55,26 @@ class LibrarySpec:
   @property
   def library_dir(self) -> Path:
     """Staged-inputs dir (mj-nlp [qpos|qvel] schema) the converter reads."""
-    return _TRAJ_DIR / f"crawl_{self.name}_library"
+    return _LIB_DIR / f"crawl_{self.name}_library"
 
   @property
   def tracking_dir(self) -> Path:
     """Converted tracking-npz dir the env's ``MOTION_DIR`` points at."""
-    return _TRAJ_DIR / f"crawl_{self.name}_tracking"
+    return _LIB_DIR / f"crawl_{self.name}_tracking"
 
 
 # ---- central registry: one entry per crawl controller ------------------------------------------
 
 LIBRARY_SPECS: dict[str, LibrarySpec] = {
-  # Omnidirectional: the full 3-D forward twist grid.
+  # Omnidirectional: ALL directions -- full forward + backward grids + in-place turns.
   "omni": LibrarySpec(
     name="omni",
-    sources=(Source("crawl_fwd"),),
+    sources=(
+      Source("crawl_fwd"),       # full forward grid (vx>0, + crab + curve)
+      Source("crawl_bck"),       # full backward grid (vx<0)
+      Source("crawl_turn_pos"),  # in-place left turns
+      Source("crawl_turn_neg"),  # in-place right turns
+    ),
   ),
   # Differential-drive (tank): straight forward + straight backward columns + in-place turns.
   "diffdrive": LibrarySpec(
