@@ -7,11 +7,14 @@ axes ``[vx, vy, wz]``. Only four command fields change; everything else is inher
 envs stay in lock-step.
 """
 
+from dataclasses import replace
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.tasks.crawling_common.library import LIBRARY_SPECS
 from mjlab.tasks.crawling_fwd_blending.config.g1.env_cfgs import (
   unitree_g1_crawling_fwd_blending_env_cfg,
 )
+from mjlab.viewer.viewer_config import ViewerConfig
 
 # Converted tracking-format 3-D crawl library (the full fwd [vx, vy, wz] grid + idle). Selection
 # lives in crawling_common.library.LIBRARY_SPECS["omni"]; build/refresh it with
@@ -41,5 +44,12 @@ def unitree_g1_crawling_omni_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg
   )
   cmd.twist_command_range = PLAY_TWIST if play else TWIST_RANGE
   cmd.twist_metric_weights = TWIST_METRIC_WEIGHTS
+
+  # Replay-only viewer tweaks: hide the green reference ghost, and free the camera (don't pin the
+  # view to the first robot) so it can be panned/orbited manually. replace() avoids mutating a
+  # possibly-shared viewer object.
+  if play:
+    cmd.debug_vis = False
+    cfg.viewer = replace(cfg.viewer, origin_type=ViewerConfig.OriginType.WORLD)
 
   return cfg

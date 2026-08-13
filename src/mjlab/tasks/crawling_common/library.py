@@ -70,8 +70,8 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
   "omni": LibrarySpec(
     name="omni",
     sources=(
-      Source("crawl_fwd"),       # full forward grid (vx>0, + crab + curve)
-      Source("crawl_bck"),       # full backward grid (vx<0)
+      Source("crawl_fwd"),  # full forward grid (vx>0, + crab + curve)
+      Source("crawl_bck"),  # full backward grid (vx<0)
       Source("crawl_turn_pos"),  # in-place left turns
       Source("crawl_turn_neg"),  # in-place right turns
     ),

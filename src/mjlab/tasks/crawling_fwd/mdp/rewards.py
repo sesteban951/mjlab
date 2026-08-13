@@ -41,11 +41,15 @@ def twist_tracking(
   ez = torch.zeros_like(v)
   ez[:, 2] = 1.0
   z_w = quat_apply(data.root_link_quat_w, ez)  # pelvis body-Z axis in world
-  psi = torch.atan2(z_w[:, 1], z_w[:, 0])  # crawl heading (ground-projected body-Z azimuth)
+  psi = torch.atan2(
+    z_w[:, 1], z_w[:, 0]
+  )  # crawl heading (ground-projected body-Z azimuth)
   c, s = torch.cos(psi), torch.sin(psi)
   vx = c * v[:, 0] + s * v[:, 1]  # world -> heading frame: Rz(-psi) . v_xy
   vy = -s * v[:, 0] + c * v[:, 1]
-  achieved = torch.stack([vx, vy, w[:, 2]], dim=-1)  # [body-forward, body-lateral, yaw-rate]
+  achieved = torch.stack(
+    [vx, vy, w[:, 2]], dim=-1
+  )  # [body-forward, body-lateral, yaw-rate]
   return torch.exp(
     -torch.sum(torch.square(achieved - cmd.twist_command), dim=-1) / (std**2)
   )
