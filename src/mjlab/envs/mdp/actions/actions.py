@@ -137,6 +137,11 @@ class BaseAction(ActionTerm):
     return self._raw_actions
 
   @property
+  def processed_actions(self) -> torch.Tensor:
+    """Actions after scale/offset/clip, in the transmission's own units."""
+    return self._processed_actions
+
+  @property
   def action_dim(self) -> int:
     """Dimension of the action space."""
     return self._action_dim

@@ -1,3 +1,15 @@
+from mjlab.envs.mdp.actions.action_with_prior import (
+  JointPositionActionWithPrior as JointPositionActionWithPrior,
+)
+from mjlab.envs.mdp.actions.action_with_prior import (
+  JointPositionActionWithPriorCfg as JointPositionActionWithPriorCfg,
+)
+from mjlab.envs.mdp.actions.action_with_prior import (
+  JointPriorTerm as JointPriorTerm,
+)
+from mjlab.envs.mdp.actions.action_with_prior import (
+  default_joint_pos_prior as default_joint_pos_prior,
+)
 from mjlab.envs.mdp.actions.actions import JointEffortAction as JointEffortAction
 from mjlab.envs.mdp.actions.actions import JointEffortActionCfg as JointEffortActionCfg
 from mjlab.envs.mdp.actions.actions import JointPositionAction as JointPositionAction
