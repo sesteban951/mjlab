@@ -6,6 +6,7 @@ anneals the prior weight ``lam`` to zero. Everything else -- scene, motion
 command, observations, rewards, terminations -- is identical.
 """
 
+import os
 from dataclasses import fields
 
 from mjlab.envs import ManagerBasedRlEnvCfg
@@ -23,11 +24,10 @@ LAM_START = 5.0
 
 # Environment step at which lam reaches zero (pure policy).  so 5000 steps
 # is roughly 200 iterations out of 30k -- a fast drop, meant as a warm start rather than a long-lived crutch.
-LAM_ZERO_STEP = 5000
+LAM_ZERO_STEP = 50000
 
 # Weight of the behavior-cloning pull toward the prior. The penalty is a sum of squared
 # joint-angle errors in radians, on the same scale as the tracking rewards, and it carries
-# its own lam-proportional fade -- so this is the weight it has at LAM_START, not throughout.
 PRIOR_DEVIATION_WEIGHT = -0.2
 
 
@@ -40,6 +40,22 @@ def unitree_g1_tracking_prior_env_cfg(
     has_state_estimation=has_state_estimation, play=play
   )
 
+  # MJLAB_PRIOR_TAPE points at a *_prior.npz to replay a solved control tape as the
+  # prior instead of the reference pose; MJLAB_PRIOR_FEEDBACK=1 closes its LQR loop
+  # (off by default -- RSI randomizes the base the gains were designed against).
+  tape = os.environ.get("MJLAB_PRIOR_TAPE")
+  if tape:
+    prior = mdp.motion_tape_prior
+    prior_params = {
+      "command_name": "motion",
+      "tape_file": tape,
+      "feedback": os.environ.get("MJLAB_PRIOR_FEEDBACK") == "1",
+    }
+    print(f"[INFO] control prior: tape {tape} (feedback={prior_params['feedback']})")
+  else:
+    prior = mdp.motion_reference_joint_pos
+    prior_params = {"command_name": "motion"}
+
   # Swap the joint position action for the prior-blended variant, carrying over
   # all of its fields (notably the per-joint action scale).
   old = cfg.actions["joint_pos"]
@@ -47,8 +63,8 @@ def unitree_g1_tracking_prior_env_cfg(
   kwargs = {f.name: getattr(old, f.name) for f in fields(old)}
   cfg.actions["joint_pos"] = JointPositionActionWithPriorCfg(
     **kwargs,
-    prior=mdp.motion_reference_joint_pos,
-    prior_params={"command_name": "motion"},
+    prior=prior,
+    prior_params=prior_params,
     # Evaluate the prior once per control step, in lockstep with the policy.
     prior_frequency_hz=None,
     # Play runs the trained policy alone; training starts leaning on the prior.
