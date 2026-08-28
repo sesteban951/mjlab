@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Callable, Literal, Protocol, runtime_checkable
 
 import torch
 
@@ -108,6 +108,16 @@ class JointPositionActionWithPriorCfg(JointPositionActionCfg):
   """Initial prior weight ``lam >= 0``. The prior gets ``lam / (1 + lam)`` of the
   authority and the policy ``1 / (1 + lam)``. Annealed by
   :func:`mjlab.envs.mdp.curriculums.action_curriculum`."""
+
+  blend: Literal["convex", "residual"] = "convex"
+  """How the policy and prior are combined.
+
+  ``"convex"``: ``u = 1 / (1 + lam) * pi(o) + lam / (1 + lam) * u_prior``.
+
+  ``"residual"``: ``u = u_prior + pi(o)``, with ``lam`` unused -- the policy learns a
+  correction on top of the prior rather than competing with it for authority. Set
+  ``use_default_offset=False`` alongside it, or the default pose is added on top of
+  the prior's target and the residual is biased by a whole standing posture."""
 
   def build(self, env: ManagerBasedRlEnv) -> JointPositionActionWithPrior:
     return JointPositionActionWithPrior(self, env)
@@ -230,13 +240,16 @@ class JointPositionActionWithPrior(JointPositionAction):
       self._prior_target[:] = prior
     self._substep += 1
 
-    policy_weight = 1.0 / (1.0 + self._lam)
-    torch.lerp(
-      self._processed_actions,
-      self._prior_target,
-      1.0 - policy_weight,
-      out=self._blended_target,
-    )
+    if self.cfg.blend == "residual":
+      torch.add(self._prior_target, self._processed_actions, out=self._blended_target)
+    else:
+      policy_weight = 1.0 / (1.0 + self._lam)
+      torch.lerp(
+        self._processed_actions,
+        self._prior_target,
+        1.0 - policy_weight,
+        out=self._blended_target,
+      )
 
     encoder_bias = self._entity.data.encoder_bias[:, self._target_ids]
     self._entity.set_joint_position_target(

@@ -56,22 +56,33 @@ def unitree_g1_tracking_prior_env_cfg(
     prior = mdp.motion_reference_joint_pos
     prior_params = {"command_name": "motion"}
 
+  # MJLAB_PRIOR_BLEND=residual makes the policy a correction on top of the prior,
+  # u = u_prior + pi(o), with lam out of the picture entirely. The default pose offset
+  # comes off with it -- in residual mode pi(o) is a delta, not an absolute target -- and
+  # so do the lam curriculum and the deviation penalty, neither of which means anything
+  # once the policy is no longer competing with the prior for authority.
+  residual = os.environ.get("MJLAB_PRIOR_BLEND") == "residual"
+
   # Swap the joint position action for the prior-blended variant, carrying over
   # all of its fields (notably the per-joint action scale).
   old = cfg.actions["joint_pos"]
   assert isinstance(old, JointPositionActionCfg)
   kwargs = {f.name: getattr(old, f.name) for f in fields(old)}
+  if residual:
+    kwargs["use_default_offset"] = False
+    print("[INFO] control blend: residual (u = u_prior + pi(o); lam unused)")
   cfg.actions["joint_pos"] = JointPositionActionWithPriorCfg(
     **kwargs,
     prior=prior,
     prior_params=prior_params,
     # Evaluate the prior once per control step, in lockstep with the policy.
     prior_frequency_hz=None,
+    blend="residual" if residual else "convex",
     # Play runs the trained policy alone; training starts leaning on the prior.
     lam=0.0 if play else LAM_START,
   )
 
-  if not play:
+  if not play and not residual:
     # Shape pi(o) while the prior is the thing actually driving, so it is not handed full
     # authority cold at lam = 0. Fades with the prior's share of the command, so no second
     # curriculum is needed.
