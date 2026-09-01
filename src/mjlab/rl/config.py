@@ -108,6 +108,8 @@ class RslRlBaseRunnerCfg:
   """The wandb project name."""
   wandb_tags: Tuple[str, ...] = ()
   """Tags for the wandb run. Default is empty tuple."""
+  wandb_group: str = ""
+  """Optional wandb group used to bundle related runs. Empty means no group."""
   resume: bool = False
   """Whether to resume the experiment. Default is False."""
   load_run: str = ".*"

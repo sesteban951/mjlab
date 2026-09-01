@@ -3,14 +3,19 @@
 The applied joint-position target is a convex combination of the policy's
 target and a prior controller's target::
 
-    u = 1 / (1 + lam) * pi(o) + lam / (1 + lam) * u_prior(s)
+    u = (1 - lam) * pi(o) + lam * u_prior(s)
 
 Both terms are in radians (the policy's raw action is mapped to radians by the
 usual ``scale``/``offset`` of :class:`JointPositionAction`, so the blend needs no
-extra unit conversion). ``lam >= 0`` weights the prior: ``lam = 0`` is the pure
-policy, ``lam = 5`` gives the prior 5/6 of the authority, ``lam -> inf`` is the
-pure prior. Anneal it during training with
+extra unit conversion). ``lam`` in ``[0, 1]`` is the prior's share of the
+command directly: ``lam = 0`` is the pure policy, ``lam = 1`` is the pure prior,
+``lam = 0.5`` splits it evenly. Anneal it during training with
 :func:`mjlab.envs.mdp.curriculums.action_curriculum`.
+
+``blend`` selects how the two are combined -- the convex blend above,
+``"residual"`` (``u = u_prior + pi(o)``), or ``"nominal"`` (``u = pi(o)``, the prior
+evaluated but never applied, for a control-group run that still wants the prior as a
+reward signal).
 
 The prior is evaluated *inside the decimation loop* at its own rate
 (``prior_frequency_hz``, zero-order held between evaluations), so it can be a
@@ -86,38 +91,20 @@ class JointPositionActionWithPriorCfg(JointPositionActionCfg):
   """
 
   prior_params: dict[str, Any] = field(default_factory=dict)
-  """Keyword arguments forwarded to ``prior`` on every evaluation.
-
-  ``SceneEntityCfg`` values are resolved against the scene at init. If the prior
-  declares a ``joint_ids`` or ``entity_name`` parameter and does not get one
-  here, the action term injects its own resolved values, so a prior can gather
-  the term's joints without re-deriving the ordering."""
+  """Keyword arguments forwarded to ``prior`` on every evaluation."""
 
   prior_frequency_hz: float | None = None
-  """Rate at which the prior is re-evaluated, in Hz.
+  """Rate at which the prior is re-evaluated, in Hz."""
 
-  ``None`` (the default) evaluates it once per control step, in lockstep with
-  the policy. A higher rate re-evaluates it inside the decimation loop, which
-  only matters for a state-feedback prior; a feedforward prior gains nothing
-  from it. Must divide the physics rate (``1 / sim.mujoco.timestep``) into an
-  integer number of substeps, and cannot be slower than the control rate. With
-  the default 200 Hz physics and 50 Hz control, ``100.0`` runs the prior on
-  every 2nd substep and ``200.0`` on every substep."""
+  lam: float = 5.0 / 6.0
+  """Initial prior weight, in ``[0, 1]``. The prior gets ``lam`` of the authority and the policy ``1 - lam``."""
 
-  lam: float = 5.0
-  """Initial prior weight ``lam >= 0``. The prior gets ``lam / (1 + lam)`` of the
-  authority and the policy ``1 / (1 + lam)``. Annealed by
-  :func:`mjlab.envs.mdp.curriculums.action_curriculum`."""
-
-  blend: Literal["convex", "residual"] = "convex"
+  blend: Literal["convex", "residual", "nominal"] = "nominal"
   """How the policy and prior are combined.
-
-  ``"convex"``: ``u = 1 / (1 + lam) * pi(o) + lam / (1 + lam) * u_prior``.
-
-  ``"residual"``: ``u = u_prior + pi(o)``, with ``lam`` unused -- the policy learns a
-  correction on top of the prior rather than competing with it for authority. Set
-  ``use_default_offset=False`` alongside it, or the default pose is added on top of
-  the prior's target and the residual is biased by a whole standing posture."""
+  ``"convex"``: ``u = (1 - lam) * pi(o) + lam * u_prior``.
+  ``"residual"``: ``u = u_prior + pi(o)``.
+  ``"nominal"``: ``u = pi(o)``. 
+  """
 
   def build(self, env: ManagerBasedRlEnv) -> JointPositionActionWithPrior:
     return JointPositionActionWithPrior(self, env)
@@ -140,9 +127,10 @@ class JointPositionActionWithPrior(JointPositionAction):
   def __init__(self, cfg: JointPositionActionWithPriorCfg, env: ManagerBasedRlEnv):
     super().__init__(cfg=cfg, env=env)
 
-    if cfg.lam < 0.0:
-      raise ValueError(f"lam must be non-negative, got {cfg.lam}.")
+    if not 0.0 <= cfg.lam <= 1.0:
+      raise ValueError(f"lam must lie in [0, 1], got {cfg.lam}.")
     self._lam = float(cfg.lam)
+    self._blend = cfg.blend
 
     physics_hz = 1.0 / env.physics_dt
     if cfg.prior_frequency_hz is None:
@@ -196,20 +184,20 @@ class JointPositionActionWithPrior(JointPositionAction):
 
   @property
   def lam(self) -> float:
-    """Prior weight. The prior gets ``lam / (1 + lam)`` of the authority."""
+    """Prior weight in ``[0, 1]``. The prior gets ``lam`` of the authority."""
     return self._lam
 
   @lam.setter
   def lam(self, value: float) -> None:
     value = float(value)
-    if value < 0.0:
-      raise ValueError(f"lam must be non-negative, got {value}.")
+    if not 0.0 <= value <= 1.0:
+      raise ValueError(f"lam must lie in [0, 1], got {value}.")
     self._lam = value
 
   @property
   def prior_weight(self) -> float:
-    """``lam / (1 + lam)``, the fraction of the command coming from the prior."""
-    return self._lam / (1.0 + self._lam)
+    """``lam``, the fraction of the command coming from the prior."""
+    return self._lam
 
   @property
   def prior_target(self) -> torch.Tensor:
@@ -240,14 +228,15 @@ class JointPositionActionWithPrior(JointPositionAction):
       self._prior_target[:] = prior
     self._substep += 1
 
-    if self.cfg.blend == "residual":
+    if self._blend == "nominal":
+      self._blended_target[:] = self._processed_actions
+    elif self._blend == "residual":
       torch.add(self._prior_target, self._processed_actions, out=self._blended_target)
     else:
-      policy_weight = 1.0 / (1.0 + self._lam)
       torch.lerp(
         self._processed_actions,
         self._prior_target,
-        1.0 - policy_weight,
+        self._lam,
         out=self._blended_target,
       )
 

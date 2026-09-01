@@ -217,7 +217,7 @@ class action_curriculum:
         "action_name": "joint_pos",
         "attribute": "lam",
         "stages": [
-          {"step": 0, "value": 5.0},
+          {"step": 0, "value": 1.0},
           {"step": 20000, "value": 0.0},
         ],
       },

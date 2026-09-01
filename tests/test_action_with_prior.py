@@ -55,6 +55,9 @@ def constant_prior(env, value: float = PRIOR_POS) -> torch.Tensor:
 
 
 def make_term(mock_env, **kwargs) -> JointPositionActionWithPrior:
+  # Most of these tests exercise the lam blend, which only exists under "convex"; the
+  # cfg default is "nominal".
+  kwargs.setdefault("blend", "convex")
   cfg = JointPositionActionWithPriorCfg(
     entity_name="robot",
     actuator_names=(".*",),
@@ -69,8 +72,8 @@ def make_term(mock_env, **kwargs) -> JointPositionActionWithPrior:
   "lam,expected",
   [
     (0.0, 1.5),  # Pure policy: default 0.5 + action 1.0.
-    (1.0, 1.75),  # Half and half with the prior at 2.0.
-    (5.0, 1.9166667),  # 1/6 policy + 5/6 prior.
+    (0.5, 1.75),  # Half and half with the prior at 2.0.
+    (1.0, 2.0),  # Pure prior.
   ],
 )
 def test_blend_weights(mock_env, device, lam, expected):
@@ -133,19 +136,19 @@ def test_rejects_prior_with_wrong_shape(mock_env, device):
 
 
 def test_lam_curriculum_interpolates(mock_env):
-  term = make_term(mock_env, lam=5.0)
+  term = make_term(mock_env, lam=1.0)
   mock_env.action_manager.get_term.return_value = term
 
   params: dict[str, Any] = {
     "action_name": "joint_pos",
-    "stages": [{"step": 0, "value": 5.0}, {"step": 100, "value": 0.0}],
+    "stages": [{"step": 0, "value": 1.0}, {"step": 100, "value": 0.0}],
   }
   curriculum = action_curriculum(
     CurriculumTermCfg(func=Mock(), params=params), mock_env
   )
 
   env_ids = torch.tensor([0])
-  for step, expected in [(0, 5.0), (50, 2.5), (100, 0.0), (200, 0.0)]:
+  for step, expected in [(0, 1.0), (50, 0.5), (100, 0.0), (200, 0.0)]:
     mock_env.common_step_counter = step
     out = curriculum(mock_env, env_ids, **params)
     assert term.lam == pytest.approx(expected)
@@ -153,12 +156,12 @@ def test_lam_curriculum_interpolates(mock_env):
 
 
 def test_lam_curriculum_piecewise_constant(mock_env):
-  term = make_term(mock_env, lam=5.0)
+  term = make_term(mock_env, lam=1.0)
   mock_env.action_manager.get_term.return_value = term
 
   params: dict[str, Any] = {
     "action_name": "joint_pos",
-    "stages": [{"step": 0, "value": 5.0}, {"step": 100, "value": 0.0}],
+    "stages": [{"step": 0, "value": 1.0}, {"step": 100, "value": 0.0}],
     "interpolate": False,
   }
   curriculum = action_curriculum(
@@ -167,7 +170,7 @@ def test_lam_curriculum_piecewise_constant(mock_env):
 
   mock_env.common_step_counter = 50
   curriculum(mock_env, torch.tensor([0]), **params)
-  assert term.lam == pytest.approx(5.0)
+  assert term.lam == pytest.approx(1.0)
 
 
 def test_prior_defaults_to_control_rate(mock_env, device):
@@ -203,4 +206,53 @@ def test_targets_survive_reset(mock_env, device):
   before = term.blended_target.clone()
 
   term.reset(torch.arange(NUM_ENVS, device=device))
+  torch.testing.assert_close(term.blended_target, before)
+
+
+@pytest.mark.parametrize(
+  "blend,expected",
+  [
+    ("convex", 1.75),  # lam = 0.5: half the policy's 1.5, half the prior's 2.0.
+    ("residual", 3.5),  # u_prior + pi(o) = 2.0 + 1.5.
+    ("nominal", 1.5),  # Pure policy: the prior is evaluated but never applied.
+  ],
+)
+def test_blend_modes(mock_env, device, blend, expected):
+  term = make_term(mock_env, lam=0.5, blend=blend)
+  term.process_actions(torch.ones((NUM_ENVS, NUM_JOINTS), device=device))
+  term.apply_actions()
+
+  applied = mock_env.scene["robot"].set_joint_position_target.call_args[0][0]
+  torch.testing.assert_close(
+    applied, torch.full_like(applied, expected), rtol=0, atol=1e-5
+  )
+
+
+def test_nominal_still_publishes_the_prior(mock_env, device):
+  """The prior is evaluated under "nominal" so rewards can read it."""
+  calls = []
+
+  def counting_prior(env):
+    del env
+    calls.append(len(calls))
+    return torch.full((NUM_ENVS, NUM_JOINTS), PRIOR_POS, device=device)
+
+  cfg = JointPositionActionWithPriorCfg(
+    entity_name="robot",
+    actuator_names=(".*",),
+    prior=counting_prior,
+    blend="nominal",
+  )
+  term = cfg.build(mock_env)
+  term.process_actions(torch.ones((NUM_ENVS, NUM_JOINTS), device=device))
+  term.apply_actions()
+
+  assert len(calls) == 1
+  torch.testing.assert_close(
+    term.prior_target, torch.full_like(term.prior_target, PRIOR_POS)
+  )
+  # lam is irrelevant under "nominal": the applied target does not move with it.
+  before = term.blended_target.clone()
+  term.lam = 1.0
+  term.apply_actions()
   torch.testing.assert_close(term.blended_target, before)

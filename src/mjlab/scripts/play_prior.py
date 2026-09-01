@@ -21,10 +21,9 @@ from mjlab.tasks.tracking_prior.mdp import motion_tape_prior
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.viewer import NativeMujocoViewer, ViserPlayViewer
 
-# lam the prior runs at. The policy keeps 1 / (1 + lam) of the command, so this leaves it
-# a millionth of the authority -- near enough to a pure prior, and finite, unlike inf,
-# which would make lam / (1 + lam) a NaN.
-PURE_PRIOR_LAM = 1e6
+# lam the prior runs at: 1.0 hands it the whole command and leaves the policy none,
+# which is what this script is for -- scoring the tape on its own.
+PURE_PRIOR_LAM = 1.0
 
 
 @dataclass(frozen=True)
@@ -43,6 +42,9 @@ class PlayPriorConfig:
   feedback at the physics rate, which is what the gains were designed for."""
   num_envs: int = 1
   device: str | None = None
+  loop: bool | None = None
+  """Reset and replay when the episode ends. Default: on under a viewer, off headless,
+  where stopping at the end is what reports where the tape loses the robot."""
   viewer: Literal["none", "auto", "native", "viser"] = "none"
   no_terminations: bool = False
   sim_timestep: float | None = None
@@ -93,10 +95,16 @@ def _build_env(cfg: PlayPriorConfig, device: str, tape_file: Path, fps: float):
     env_cfg.sim.mujoco.integrator = cfg.integrator
 
   env_cfg.scene.num_envs = cfg.num_envs
-  # Report where the tape actually loses the robot instead of resetting out from under it.
-  env_cfg.auto_reset = False
+  # Headless, hold the terminal state instead of resetting out from under the rollout:
+  # that is what reports where the tape loses the robot. Under a viewer, replay on a loop.
+  env_cfg.auto_reset = cfg.loop if cfg.loop is not None else cfg.viewer != "none"
   if not cfg.randomize:
     env_cfg.events = {}
+    # Play mode zeroes the command's RSI pose and velocity ranges but leaves
+    # joint_position_range at (-0.1, 0.1), so every reset still lands the robot with up to
+    # 0.1 rad of independent noise on all 29 joints -- enough that a fixed tape survives
+    # some replays and not others. A tape is scored against the state it was solved from.
+    motion_cmd.joint_position_range = (0.0, 0.0)
   if cfg.no_terminations:
     env_cfg.terminations = {}
   return ManagerBasedRlEnv(cfg=env_cfg, device=device)

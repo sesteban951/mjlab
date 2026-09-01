@@ -18,7 +18,7 @@ Added
   ``False``, preserving the previous difficulty-independent behavior.
 - Added ``JointPositionActionWithPrior``, a joint position action that blends
   the policy target with a full-state control prior as
-  ``u = 1/(1+lam) * pi(o) + lam/(1+lam) * u_prior(s)``. The prior is evaluated
+  ``u = (1 - lam) * pi(o) + lam * u_prior(s)``, with ``lam`` in ``[0, 1]``. The prior is evaluated
   inside the decimation loop at its own ``prior_frequency_hz``, so it can be a
   state-feedback controller rather than a per-control-step feedforward
   reference, and it reads the environment directly so it is not limited to the
@@ -28,7 +28,7 @@ Added
   interpolating between stages.
 - Added the ``Mjlab-Tracking-Prior-Flat-Unitree-G1`` task: G1 motion tracking
   with the reference motion's joint angles as the control prior, annealed from
-  ``lam = 5`` to zero over the first 5000 environment steps.
+  ``lam = 5/6`` to zero over the first 50000 environment steps.
 - Added material domain randomization functions for MuJoCo Warp RGB rendering:
   ``dr.mat_emission``, ``dr.mat_specular``, ``dr.mat_shininess``, and
   ``dr.mat_texrepeat``.

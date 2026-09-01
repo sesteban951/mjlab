@@ -318,11 +318,16 @@ Libraries are built in two layers:
 
 ```python
 LIBRARY_SPECS = {
-  "omni":      LibrarySpec(name="omni", sources=(Source("crawl_fwd"),)),
-  "diffdrive": LibrarySpec(name="diffdrive", sources=(
-     Source("crawl_fwd", keep={"vy": 0.0, "wz": 0.0}),    # straight forward column
-     Source("crawl_bck", keep={"vy": 0.0, "wz": 0.0}),    # straight backward column
-     Source("crawl_turn_pos"), Source("crawl_turn_neg"))),  # in-place turns (whole families)
+  "omni": LibrarySpec(name="omni", sources=(Source("crawl_fwd"),)),
+  "diffdrive": LibrarySpec(
+    name="diffdrive",
+    sources=(
+      Source("crawl_fwd", keep={"vy": 0.0, "wz": 0.0}),  # straight forward column
+      Source("crawl_bck", keep={"vy": 0.0, "wz": 0.0}),  # straight backward column
+      Source("crawl_turn_pos"),
+      Source("crawl_turn_neg"),
+    ),
+  ),  # in-place turns (whole families)
 }
 ```
 

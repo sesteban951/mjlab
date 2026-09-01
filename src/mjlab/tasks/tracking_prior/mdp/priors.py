@@ -38,6 +38,44 @@ def motion_reference_joint_pos(
   return command.joint_pos[:, joint_ids]
 
 
+def tangent_state_error(
+  env: ManagerBasedRlEnv,
+  entity,
+  qpos_ref: torch.Tensor,
+  qvel_ref: torch.Tensor,
+) -> torch.Tensor:
+  """``x - xbar`` in the tangent basis an LQR schedule is designed in, ``(N, 2*nv)``.
+
+  The layout matches the columns of a tape's ``gain`` (and so of any ``P`` solved
+  alongside it)::
+
+      0:3    base position      2*nv//2 + 0:3   base linear velocity
+      3:6    base rotation      ...      + 3:6  base angular velocity
+      6:nv   joint positions    ...      + 6:   joint velocities
+
+  Base position is taken relative to the env origin, base rotation as the log map of
+  the error quaternion expressed in the *reference's* frame, and base angular velocity
+  in the body frame -- MuJoCo's own free-joint conventions, which is what the gains
+  were designed against. ``qpos_ref``/``qvel_ref`` are ``(N, 7 + njoint)`` and
+  ``(N, 6 + njoint)``, already gathered at each env's current frame.
+  """
+  data = entity.data
+  quat = data.root_link_quat_w
+  return torch.cat(
+    [
+      # Positions: world offset, base rotation logged in the reference's frame.
+      data.root_link_pos_w - env.scene.env_origins - qpos_ref[:, :3],
+      axis_angle_from_quat(quat_mul(quat_inv(qpos_ref[:, 3:7]), quat)),
+      data.joint_pos - qpos_ref[:, 7:],
+      # Velocities: free-joint qvel is linear in world, angular in the body frame.
+      data.root_link_lin_vel_w - qvel_ref[:, :3],
+      quat_apply_inverse(quat, data.root_link_ang_vel_w) - qvel_ref[:, 3:6],
+      data.joint_vel - qvel_ref[:, 6:],
+    ],
+    dim=-1,
+  )
+
+
 class motion_tape_prior:
   """Prior that replays a solved control tape, optionally closing its LQR loop.
 
@@ -123,20 +161,4 @@ class motion_tape_prior:
     return target
 
   def _state_error(self, env: ManagerBasedRlEnv, k: torch.Tensor) -> torch.Tensor:
-    """``x - xbar[k]`` in the tangent basis the gains were designed in, ``(N, 2*nv)``."""
-    data = self._entity.data
-    qpos_ref, qvel_ref = self._qpos_ref[k], self._qvel_ref[k]
-    quat = data.root_link_quat_w
-    return torch.cat(
-      [
-        # Positions: world offset, base rotation logged in the reference's frame.
-        data.root_link_pos_w - env.scene.env_origins - qpos_ref[:, :3],
-        axis_angle_from_quat(quat_mul(quat_inv(qpos_ref[:, 3:7]), quat)),
-        data.joint_pos - qpos_ref[:, 7:],
-        # Velocities: free-joint qvel is linear in world, angular in the body frame.
-        data.root_link_lin_vel_w - qvel_ref[:, :3],
-        quat_apply_inverse(quat, data.root_link_ang_vel_w) - qvel_ref[:, 3:6],
-        data.joint_vel - qvel_ref[:, 6:],
-      ],
-      dim=-1,
-    )
+    return tangent_state_error(env, self._entity, self._qpos_ref[k], self._qvel_ref[k])

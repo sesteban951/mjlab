@@ -32,3 +32,10 @@ def add_wandb_tags(tags: Sequence[str]) -> None:
       os.environ["WANDB_TAGS"] = ",".join(sorted(all_tags))
   except ImportError:
     pass
+
+
+def set_wandb_group(group: str | None) -> None:
+  """Set the wandb run group via env var, honoring lazy wandb initialization."""
+  if not group:
+    return
+  os.environ["WANDB_RUN_GROUP"] = group
