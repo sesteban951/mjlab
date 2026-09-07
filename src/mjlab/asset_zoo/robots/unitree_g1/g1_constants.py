@@ -27,6 +27,20 @@ def get_spec() -> mujoco.MjSpec:
   return mujoco.MjSpec.from_file(str(G1_XML))
 
 
+# The SPHERE-FOOT variant: g1.xml with the 7 capsules per foot replaced by the 4 point spheres
+# from mj-nlp's g1_29dof_feet.xml. For tasks that consume a trajectory optimized against that
+# sole -- a gain schedule is only valid on the plant it was linearized through, and the feet are
+# the one part of this robot the two repos disagreed on.
+G1_SPHERE_FEET_XML: Path = (
+  MJLAB_SRC_PATH / "asset_zoo" / "robots" / "unitree_g1" / "xmls" / "g1_sphere_feet.xml"
+)
+assert G1_SPHERE_FEET_XML.exists()
+
+
+def get_sphere_feet_spec() -> mujoco.MjSpec:
+  return mujoco.MjSpec.from_file(str(G1_SPHERE_FEET_XML))
+
+
 ##
 # Actuator config.
 ##
@@ -233,6 +247,16 @@ FULL_COLLISION_WITHOUT_SELF = CollisionCfg(
   friction={r"^(left|right)_foot[1-7]_collision$": (0.6,)},
 )
 
+# FULL_COLLISION for the sphere sole. IDENTICAL except friction, which is 1.0 to match mj-nlp's
+# g1_29dof_feet.xml rather than g1.xml's 0.6 -- the sphere variant keeps g1.xml's foot geom names
+# precisely so the regexes, and everything else keyed on them, carry over untouched.
+SPHERE_FEET_COLLISION = CollisionCfg(
+  geom_names_expr=(".*_collision",),
+  condim={r"^(left|right)_foot[1-7]_collision$": 3, ".*_collision": 1},
+  priority={r"^(left|right)_foot[1-7]_collision$": 1},
+  friction={r"^(left|right)_foot[1-7]_collision$": (1.0,)},
+)
+
 # This disables all collisions except the feet.
 # Feet get condim=3, all other geoms are disabled.
 FEET_ONLY_COLLISION = CollisionCfg(
@@ -271,6 +295,20 @@ def get_g1_robot_cfg() -> EntityCfg:
     init_state=KNEES_BENT_KEYFRAME,
     collisions=(FULL_COLLISION,),
     spec_fn=get_spec,
+    articulation=G1_ARTICULATION,
+  )
+
+
+def get_g1_sphere_feet_robot_cfg() -> EntityCfg:
+  """G1 with the 4-sphere sole instead of the 7-capsule one.
+
+  Identical to :func:`get_g1_robot_cfg` apart from the spec and the collision cfg. Use it when
+  the task consumes a trajectory or controller built against mj-nlp's ``g1_29dof_feet.xml``.
+  """
+  return EntityCfg(
+    init_state=KNEES_BENT_KEYFRAME,
+    collisions=(SPHERE_FEET_COLLISION,),
+    spec_fn=get_sphere_feet_spec,
     articulation=G1_ARTICULATION,
   )
 
