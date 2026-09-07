@@ -1,10 +1,14 @@
 """Unitree G1 custom flat tracking environment configuration.
 
-Applies the unitree_rl_mjlab HOME initial pose and the shared custom DR base
-(see ``custom_dr.add_custom_g1_dr``) on top of mjlab's tracking environment.
+Applies the unitree_rl_mjlab HOME initial pose, the shared custom DR base
+(see ``custom_dr.add_custom_g1_dr``), and randomized actuator command delay
+(training only) on top of mjlab's tracking environment.
 """
 
-from mjlab.asset_zoo.robots.unitree_g1.custom_dr import add_custom_g1_dr
+from mjlab.asset_zoo.robots.unitree_g1.custom_dr import (
+  add_custom_g1_actuator_delay,
+  add_custom_g1_dr,
+)
 from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg
@@ -42,9 +46,11 @@ def unitree_g1_custom_flat_tracking_env_cfg(
   # Use unitree_rl_mjlab's HOME initial pose instead of mjlab's knees-bent pose.
   cfg.scene.entities["robot"].init_state = UNITREE_HOME_KEYFRAME
 
-  # Apply the shared custom DR base (retunes COM/encoder/friction; adds PD-gain,
-  # joint-friction, and joint-armature randomization). Perturbation and reset
-  # are left to the inherited base, which matches unitree_rl_mjlab.
+  # Apply the shared custom DR base
   add_custom_g1_dr(cfg)
+
+  # Add actuator command delay
+  if not play:
+    add_custom_g1_actuator_delay(cfg, min_delay_sec=0.0, max_delay_sec=0.02)
 
   return cfg

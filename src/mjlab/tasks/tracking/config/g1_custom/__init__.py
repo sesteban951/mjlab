@@ -15,11 +15,11 @@ _play_env_cfg = unitree_g1_custom_flat_tracking_env_cfg(
   has_state_estimation=False, play=True
 )
 
-# Stronger action-rate penalty (-0.1 -> -0.5) to curb high-frequency action chatter on hardware.
-# Scoped to THIS task only: ContactRich-Custom and the crawling tasks share the same env builder
-# but keep the base -0.1 (they override rewards on their own copies).
+# Action-rate penalty, unified to -0.2 across the custom tasks. This was previously raised to -0.5
+# (from the base -0.1) to combat high-frequency action chatter on hardware; kept as an explicit
+# override so that rationale stays documented, even though it now matches the other custom tasks.
 for _cfg in (_env_cfg, _play_env_cfg):
-  _cfg.rewards["action_rate_l2"] = replace(_cfg.rewards["action_rate_l2"], weight=-0.5)
+  _cfg.rewards["action_rate_l2"] = replace(_cfg.rewards["action_rate_l2"], weight=-0.2)
 
 register_mjlab_task(
   task_id="G1-Tracking-Custom",

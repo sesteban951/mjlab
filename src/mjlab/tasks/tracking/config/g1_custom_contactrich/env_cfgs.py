@@ -10,6 +10,8 @@ friction (condim=3) and priority=1 on *all* collision geoms so the whole body
 has meaningful, robot-governed ground friction, then randomizes that friction.
 """
 
+from dataclasses import replace
+
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.managers.event_manager import EventTermCfg
@@ -63,5 +65,9 @@ def unitree_g1_custom_contactrich_flat_tracking_env_cfg(
       "shared_random": False,
     },
   )
+
+  # Unify the action-rate penalty (-0.1 -> -0.2) for the contact-rich and crawling tasks that build
+  # on this env; scoped here so the stock tracking tasks keep the base -0.1.
+  cfg.rewards["action_rate_l2"] = replace(cfg.rewards["action_rate_l2"], weight=-0.2)
 
   return cfg
