@@ -1,12 +1,14 @@
-"""Build a per-controller crawl tracking library from its declarative LibrarySpec.
+"""Build a per-controller tracking library from its declarative LibrarySpec.
 
-Selects a filtered subset of the mj-nlp master gait grids (by twist label), stages it (+ optional
-idle csv) into ``crawl_<name>_library/``, then FK-converts it into ``crawl_<name>_tracking/`` via
-``library_to_npz``. The selection lives in ``crawling_common.library.LIBRARY_SPECS``; the env configs
-read their ``MOTION_DIR`` from the same specs, so the two never drift. Rebuild after the master grids
-change (e.g. the fwd grid finishing) to refresh the tracking libraries.
+Selects a filtered subset of an mj-nlp master gait grid (by twist label), stages it (+ optional
+idle csv) into ``<name>_library/``, then FK-converts it into ``<name>_tracking/`` via
+``library_to_npz`` at the spec's own sample rate. The selection lives in
+``crawling_common.library.LIBRARY_SPECS``; the env configs read their ``MOTION_DIR`` from the same
+specs, so the two never drift. Rebuild after the master grids change (e.g. the fwd grid finishing)
+to refresh the tracking libraries.
 
   uv run python -m mjlab.scripts.build_library diffdrive            # build one controller
+  uv run python -m mjlab.scripts.build_library standing_diffdrive   # the upright walk library
   uv run python -m mjlab.scripts.build_library all                  # build every registered controller
   uv run python -m mjlab.scripts.build_library omni --no-convert True  # dry-run: selection only
 
@@ -24,8 +26,6 @@ import tyro
 
 import mjlab
 from mjlab.tasks.crawling_common.library import (
-  DEFAULT_GAIT_ROOT,
-  DEFAULT_IDLE_CSV,
   LIBRARY_SPECS,
   LibrarySpec,
   Source,
@@ -67,14 +67,25 @@ def _verify(spec: LibrarySpec) -> None:
 
 
 def build(
-  spec: LibrarySpec, gait_root: Path, idle_csv: Path, convert: bool = True
+  spec: LibrarySpec,
+  gait_root: Optional[Path] = None,
+  idle_csv: Optional[Path] = None,
+  convert: bool = True,
 ) -> None:
-  """Stage the spec's filtered clip selection (+ idle) and (optionally) FK-convert to tracking npz."""
+  """Stage the spec's filtered clip selection (+ idle) and (optionally) FK-convert to tracking npz.
+
+  ``gait_root`` / ``idle_csv`` override the spec's own (CLI use); None takes the spec's."""
+  gait_root = gait_root or spec.gait_root
+  idle_csv = idle_csv or spec.idle_csv
   print(f"\n== library '{spec.name}' -> {spec.tracking_dir.name} ==")
+  print(f"  grids: {gait_root} @ {spec.input_fps:g} Hz")
   lib = spec.library_dir
-  if lib.exists():
-    shutil.rmtree(lib)
-  lib.mkdir(parents=True)
+  # Clear only the staged npz copies. The staging folder may also be the HOME of the spec's idle
+  # csv (the walk library keeps its standing pose there, like the original crawl library), and
+  # that must survive a rebuild.
+  lib.mkdir(parents=True, exist_ok=True)
+  for stale in lib.glob("*.npz"):
+    stale.unlink()
 
   total = 0
   for src in spec.sources:
@@ -88,8 +99,10 @@ def build(
   if spec.idle:
     if not idle_csv.exists():
       raise FileNotFoundError(f"idle=True but qpos_idle.csv not found: {idle_csv}")
-    shutil.copy(idle_csv, lib / "qpos_idle.csv")
-    print(f"  {'idle':16s}          -> {idle_csv.name}")
+    staged = lib / "qpos_idle.csv"
+    if idle_csv.resolve() != staged.resolve():  # already in place when it lives here
+      shutil.copy(idle_csv, staged)
+    print(f"  {'idle':16s}          -> {idle_csv}")
 
   print(f"  staged {total} clips (+idle={spec.idle}) into {lib}")
   if not convert:
@@ -99,7 +112,12 @@ def build(
   # Lazy import: only the actual conversion needs torch / the mjlab sim scene.
   from mjlab.scripts.library_to_npz import main as convert_to_tracking
 
-  convert_to_tracking(input_dir=str(lib), output_dir=str(spec.tracking_dir))
+  convert_to_tracking(
+    input_dir=str(lib),
+    output_dir=str(spec.tracking_dir),
+    input_fps=spec.input_fps,
+    idle_out=spec.idle_name,
+  )
   _verify(spec)
 
 
@@ -112,13 +130,16 @@ def main(
   """Build one controller's tracking library, or ``all`` of them.
 
   Args:
-    controller: a key in ``LIBRARY_SPECS`` (e.g. ``diffdrive``, ``omni``) or ``all``.
-    gait_root: master-grid root (defaults to the sibling mj-nlp ``examples/g1_gait``).
-    idle_csv: qpos_idle.csv for the zero-twist stop clip (defaults to the crawl idle pose).
+    controller: a key in ``LIBRARY_SPECS`` (e.g. ``diffdrive``, ``standing_diffdrive``) or
+      ``all``.
+    gait_root: master-grid root, overriding every built spec's own (the crawl specs default to
+      the sibling mj-nlp ``examples/g1_gait``, the walk spec to
+      ``examples/g1_mimic_periodic/library``).
+    idle_csv: qpos_idle.csv for the zero-twist stop clip, overriding the spec's own.
     no_convert: stage + print the selection only; skip the FK conversion (dry run).
   """
-  gr = Path(gait_root) if gait_root else DEFAULT_GAIT_ROOT
-  ic = Path(idle_csv) if idle_csv else DEFAULT_IDLE_CSV
+  gr = Path(gait_root) if gait_root else None
+  ic = Path(idle_csv) if idle_csv else None
   if controller == "all":
     names = list(LIBRARY_SPECS)
   elif controller in LIBRARY_SPECS:
