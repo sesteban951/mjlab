@@ -1,13 +1,13 @@
 <mujoco model="g1_29dof_rev_1_0">
   <!-- SPHERE-FOOT VARIANT of g1.xml. The 7 capsules per foot are replaced by the 4 point
        spheres (r=0.005) from mj-nlp's models/unitree_g1/g1_29dof_feet.xml, at the same
-       positions, so a trajectory optimized against that sole -- and the TVLQR designed around
-       it -- is valid on this model. Everything else (links, inertias, joints, meshes, the
+       positions, so a trajectory optimized against that sole, and the TVLQR designed around
+       it, is valid on this model. Everything else (links, inertias, joints, meshes, the
        foot_capsule class) is g1.xml's, untouched.
 
        NAMES ARE g1.xml's, NOT mj-nlp's. foot1..foot4 = heel_in, heel_out, toe_in, toe_out.
-       Every regex in mjlab keys on ^(left|right)_foot[1-7]_collision$ -- the CollisionCfgs in
-       g1_constants.py and the foot contact sensor in tasks/tracking/config/g1/env_cfgs.py --
+       Every regex in mjlab keys on ^(left|right)_foot[1-7]_collision$: the CollisionCfgs in
+       g1_constants.py and the foot contact sensor in tasks/tracking/config/g1/env_cfgs.py,
        and [1-7] matches 1..4, so nothing downstream has to know the sole changed. Renaming them
        to mj-nlp's heel/toe names broke both, which is how this was found.
 
