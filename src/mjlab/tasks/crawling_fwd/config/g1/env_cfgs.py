@@ -76,7 +76,9 @@ PLAY_TWIST = ((0.18, 0.18), (0.0, 0.0), (0.0, 0.0))
 # gaits share one period, a resample keeps the phase clock and just snaps the clip to the new twist.
 RESAMPLING_TIME_RANGE = (3.0, 8.0)
 # Fraction of resamples that command a zero twist -> the static idle clip (velocity's standing envs).
-REL_STATIC_ENVS = 0.05
+# Higher than the velocity task's 0.05: standing here also means UN-learning the phase->swing
+# coupling the gait clips teach, so the stop needs more coverage than a task with no phase clock.
+REL_STATIC_ENVS = 0.15
 
 
 def unitree_g1_crawling_fwd_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:

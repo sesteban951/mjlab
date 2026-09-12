@@ -51,7 +51,9 @@ WZ_RANGE = (0.50, 1.50)
 # the fraction that stand (zero twist -> the idle clip). Same split as the crawl.
 REL_TURN_ENVS = 0.4
 REL_BACK_ENVS = 0.5
-REL_STATIC_ENVS = 0.05
+# Higher than the velocity task's 0.05: standing here also means UN-learning the phase->swing
+# coupling the gait clips teach, so the stop needs more coverage than a task with no phase clock.
+REL_STATIC_ENVS = 0.15
 # Timer-driven twist resampling (s). Every clip shares the 1.4 s period, so a resample keeps the
 # phase clock and blends the reference to the new clip over BLEND_TIME_S instead of teleporting.
 RESAMPLING_TIME_RANGE = (3.0, 8.0)

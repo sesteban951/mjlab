@@ -121,13 +121,20 @@ class LibraryMotionCommand(MotionCommand):
       cfg.twist_metric_weights, dtype=torch.float32, device=self.device
     )  # (3,) weights the [vx, vy, wz] nearest-clip metric (units differ)
 
+    # Index of the library's zero-twist (idle) clip, or None if it has none. Located
+    # UNCONDITIONALLY, not just when rel_static_envs > 0: play mode zeroes the static fraction but
+    # teleop can still command a zero twist, and the idle stop keys off this index.
+    lib_twist_norm = torch.linalg.norm(
+      self.motion.lib_twists * self.twist_metric_weights, dim=-1
+    )
+    idle_clips = torch.nonzero(lib_twist_norm < 1e-4).flatten()
+    self._idle_clip_idx: int | None = (
+      int(idle_clips[0]) if idle_clips.numel() > 0 else None
+    )
     # A positive static fraction commands a zero twist for some envs, so the library MUST contain a
     # zero-twist (idle) clip for them to snap to (see scripts/library_to_npz.py).
     if cfg.rel_static_envs > 0.0:
-      lib_twist_norm = torch.linalg.norm(
-        self.motion.lib_twists * self.twist_metric_weights, dim=-1
-      )
-      assert bool(torch.any(lib_twist_norm < 1e-4)), (
+      assert self._idle_clip_idx is not None, (
         "rel_static_envs > 0 requires a zero-twist idle clip in motion_dir "
         f"(e.g. crawl_fwd_vx_000.npz); found twists {self.motion.lib_twists.tolist()}"
       )
@@ -135,6 +142,9 @@ class LibraryMotionCommand(MotionCommand):
     self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.clip_idx = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)
     self.twist_command = torch.zeros(self.num_envs, 3, device=self.device)
+    # True where the selected reference IS the idle clip. Set by _apply_idle_stop; read by
+    # mdp.motion_phase to blank the phase clock so a stopped robot stands STATICALLY.
+    self.is_idle = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
     # RSI (reference-state init) is applied only when resampling at an episode reset, not on the
     # mid-episode timer resample -- so the robot physically transitions between twists.
     self._rsi_on_resample = False
@@ -230,6 +240,31 @@ class LibraryMotionCommand(MotionCommand):
     ).sum(dim=-1)  # (n_envs, n_clips)
     self.clip_idx[env_ids] = torch.argmin(dist, dim=-1)
 
+  def _apply_idle_stop(self) -> None:
+    """Force an exactly-zero twist wherever the reference snapped to the idle clip.
+
+    The nearest-clip snap already has an implicit deadband -- a command closer to the zero-twist
+    clip than to the slowest gait lands on the idle clip -- but the RAW commanded twist is what the
+    actor observes (``mdp.commanded_twist``) and what ``twist_tracking`` rewards. So a small nonzero
+    command used to ask the policy to creep while the reference held still, and the two fought.
+    Collapsing the twist onto the snap makes them agree by construction:
+
+        idle clip  <=>  zero twist  <=>  blanked phase clock
+
+    The deadband is therefore DERIVED from the library rather than hand-tuned: it is exactly the
+    Voronoi cell of the idle clip under the twist metric, so it can never disagree with the
+    reference actually being tracked.
+
+    Mirrors the velocity task, which zeroes sub-threshold commands at resample
+    (``velocity_custom.mdp.velocity_command``, the ``norm(...) > 0.1`` mask) AND re-zeroes its
+    standing envs on every update. Running every step is what makes this hold for subclasses that
+    override the twist sampler (``DiffDriveMotionCommand``) and for live teleop between resamples.
+    """
+    if self._idle_clip_idx is None:
+      return
+    self.is_idle = self.clip_idx == self._idle_clip_idx
+    self.twist_command[self.is_idle] = 0.0
+
   def nearest_clip_twist(self, twist: tuple[float, float, float]) -> tuple[float, ...]:
     """The library twist a command would snap to (for display; no state change)."""
     t = torch.tensor(twist, dtype=torch.float32, device=self.device)
@@ -284,6 +319,10 @@ class LibraryMotionCommand(MotionCommand):
       # punished; net yaw then accumulates from here via the reference angular velocity.
       self.ref_anchor_quat_w[env_ids] = self.robot_anchor_quat_w[env_ids]
 
+    # Whatever picked the twist above (base sampler, subclass sampler, or a teleop pin), collapse
+    # near-idle commands onto the idle clip's exact zero.
+    self._apply_idle_stop()
+
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     # Episode reset: resample the twist AND RSI the robot into the selected clip's start pose.
     self._rsi_on_resample = True
@@ -299,6 +338,9 @@ class LibraryMotionCommand(MotionCommand):
       self._twist_request = (False, None)
       self._fixed_twist = twist
       self._resample_command(torch.arange(self.num_envs, device=self.device))
+    # Every step, not only at resample: keeps a live teleop twist and any subclass sampler
+    # consistent with the snapped clip (the velocity task re-zeroes its standing envs the same way).
+    self._apply_idle_stop()
     # Advance the shared phase clock and LOOP (wrap mod T) -- periodic gaits, no resample/RSI at the
     # clip boundary (twist resampling is timer-driven; see _resample_command).
     self.time_steps += 1
