@@ -8,6 +8,21 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added the ``G1-Robust-Tracking`` task: G1 motion tracking on mj-nlp's sideroll
+  solve with guide-only TVLQR shaping, tuned for sim2real rather than for a clean
+  CLF ablation. It keeps ``G1-Tracking-Control``'s ``clf_decrease`` and
+  ``qdes_imitation`` rewards and ``G1-Tracking-Custom``'s mode-11 actuators, custom
+  DR, actuator delay and limb/waist action-rate split, but keeps the stock capsule
+  sole, starts on ``G1-Standing-DiffDrive``'s standing idle pose, and has no
+  environment-variable switches -- every knob is a module constant. Physics runs at
+  the solve's 0.01 s timestep, since the gain schedule may only be applied at the
+  rate it was designed for.
+- Added ``scripts/mjnlp_solve_to_tvlqr``, which converts an mj-nlp LQR solve into the
+  TVLQR export schema ``tracking.mdp.tvlqr`` reads, mapping
+  ``{state, input, gains, cost_to_go}`` onto ``{x_bar, u_bar, K, P}`` and deriving
+  the tangent names, actuator mapping and ctrl box from the solve's own MuJoCo model.
+  ``alpha`` is written as a constant (0 by default), since a solve's continuous-time
+  rate is not the per-step scalar the discrete CLF condition takes.
 - Added ``BuiltinDcMotorActuator``, a native MuJoCo ``<dcmotor>`` wrapper.
   Supports voltage / position / velocity input modes with back-EMF,
   configurable motor constants, and optional integral, slew, inductance,
@@ -32,6 +47,12 @@ Added
 - Added material domain randomization functions for MuJoCo Warp RGB rendering:
   ``dr.mat_emission``, ``dr.mat_specular``, ``dr.mat_shininess``, and
   ``dr.mat_texrepeat``.
+- Added ``zero_init_last_layer`` to ``RslRlModelCfg``. When enabled, the
+  model's last linear layer is zero-initialized after construction, so the
+  actor's deterministic output starts at exactly zero instead of a small
+  nonzero value from PyTorch's default init. Enabled for the
+  ``Mjlab-Tracking-Prior-Flat-Unitree-G1`` actor, so training starts with the
+  policy contributing nothing and the control prior alone driving behavior.
 
 Changed
 ^^^^^^^

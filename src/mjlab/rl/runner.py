@@ -4,8 +4,18 @@ from pathlib import Path
 import torch
 from rsl_rl.env import VecEnv
 from rsl_rl.runners import OnPolicyRunner
+from torch import nn
 
 from mjlab.rl.vecenv_wrapper import RslRlVecEnvWrapper
+
+
+def _zero_init_last_layer(mlp: nn.Module) -> None:
+  """Zero the weight and bias of the last linear layer in an RSL-RL MLP."""
+  linears = [m for m in mlp.modules() if isinstance(m, nn.Linear)]
+  if not linears:
+    raise ValueError("No nn.Linear layer found to zero-initialize.")
+  nn.init.zeros_(linears[-1].weight)
+  nn.init.zeros_(linears[-1].bias)
 
 
 class MjlabOnPolicyRunner(OnPolicyRunner):
@@ -21,6 +31,7 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
     device: str = "cpu",
   ) -> None:
     # Strip None-valued optional configs so MLPModel doesn't receive them.
+    zero_init_last_layer = {}
     for key in ("actor", "critic"):
       if key in train_cfg:
         for opt in ("cnn_cfg", "distribution_cfg"):
@@ -29,7 +40,14 @@ class MjlabOnPolicyRunner(OnPolicyRunner):
         if train_cfg[key].get("rnn_type") is None:
           for opt in ("rnn_type", "rnn_hidden_dim", "rnn_num_layers"):
             train_cfg[key].pop(opt, None)
+        # Not an MLPModel/CNNModel/RNNModel constructor arg -- consume it here.
+        zero_init_last_layer[key] = train_cfg[key].pop("zero_init_last_layer", False)
     super().__init__(env, train_cfg, log_dir, device)
+
+    if zero_init_last_layer.get("actor"):
+      _zero_init_last_layer(self.alg._raw_actor.mlp)
+    if zero_init_last_layer.get("critic"):
+      _zero_init_last_layer(self.alg._raw_critic.mlp)
 
   def export_policy_to_onnx(
     self, path: str, filename: str = "policy.onnx", verbose: bool = False

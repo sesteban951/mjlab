@@ -36,6 +36,16 @@ class RslRlModelCfg:
   """Number of stacked RNN layers."""
   class_name: str = "MLPModel"
   """Model class name resolved by RSL-RL (MLPModel, CNNModel, or RNNModel)."""
+  zero_init_last_layer: bool = False
+  """Zero-initialize the weight and bias of the MLP's last linear layer.
+
+  RSL-RL never zero-initializes the mean head for a scalar ``GaussianDistribution``
+  (see ``distribution.init_mlp_weights``), so at construction the actor's mean output
+  is a small nonzero value from PyTorch's default ``nn.Linear`` init, not exactly zero.
+  Set this for the actor when the zero action must be a no-op (e.g. blending with a
+  control prior via ``residual``/``convex``), so the policy starts contributing
+  nothing and the prior alone determines the initial behavior.
+  """
 
 
 @dataclass

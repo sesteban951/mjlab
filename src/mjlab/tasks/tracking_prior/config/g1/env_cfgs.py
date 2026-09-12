@@ -20,8 +20,9 @@ from mjlab.tasks.tracking_prior.config.g1.rl_cfg import (
 # Initial prior weight: prior gets LAM_START of the command, policy 1 - LAM_START.
 LAM_START = 5.0 / 6.0
 
-# Environment step at which lam reaches zero (pure policy).
-LAM_ZERO_STEP = 50000
+# Environment step at which lam reaches zero (pure policy). Overridable via
+# MJLAB_LAM_ZERO_STEP for one-off runs without touching the default schedule.
+LAM_ZERO_STEP = int(os.environ.get("MJLAB_LAM_ZERO_STEP", 2500))
 
 # Scale of the saturating LQR potential shaping; ~10% of the other rewards per step.
 LYAPUNOV_KAPPA = 50  # 26.0
@@ -62,7 +63,7 @@ def unitree_g1_tracking_prior_env_cfg(
     prior_params = {"command_name": "motion"}
 
   # MJLAB_PRIOR_BLEND picks how the policy and prior are combined.
-  blend = os.environ.get("MJLAB_PRIOR_BLEND", "nominal")
+  blend = os.environ.get("MJLAB_PRIOR_BLEND", "residual")
   if blend not in ("convex", "residual", "nominal"):
     raise ValueError(
       f"MJLAB_PRIOR_BLEND={blend!r} is not one of 'convex', 'residual', 'nominal'."
@@ -92,13 +93,6 @@ def unitree_g1_tracking_prior_env_cfg(
   )
 
   if not play and blend == "convex":
-    # Shape pi(o) while the prior is the thing actually driving.
-    cfg.rewards["action_prior_deviation"] = RewardTermCfg(
-      func=mdp.action_prior_deviation,
-      params={"action_name": "joint_pos", "power": 1.0},
-      weight=-0.2,
-    )
-
     cfg.curriculum["prior_blend"] = CurriculumTermCfg(
       func=mdp.action_curriculum,
       params={
@@ -111,7 +105,95 @@ def unitree_g1_tracking_prior_env_cfg(
       },
     )
 
-  # Behavior-cloning pull toward the prior, currently off: exp(-mean sq error / std^2).
+  # MJLAB_PRIOR_REWARD selects at most one prior-linked reward term, so each can be
+  # ablated one at a time against the same blend + curriculum setup:
+  #   "input"        -> action_prior_deviation: penalize ||pi(o) - u_prior||^2, faded
+  #                      by lam**power. Only meaningful under blend="convex".
+  #   "lyapunov"      -> lqr_lyapunov_shaping: potential-based LQR cost-to-go shaping.
+  #   "lyapunov_dec"  -> lqr_lyapunov_decrease: discrete Lyapunov decrease condition.
+  #   "none" (default) -> none of the above.
+  reward_mode = os.environ.get("MJLAB_PRIOR_REWARD", "none")
+  if reward_mode not in ("none", "input", "lyapunov", "lyapunov_dec"):
+    raise ValueError(
+      f"MJLAB_PRIOR_REWARD={reward_mode!r} is not one of 'none', 'input', "
+      f"'lyapunov', 'lyapunov_dec'."
+    )
+
+  if reward_mode == "input":
+    if not play and blend == "convex":
+      # Shape pi(o) while the prior is the thing actually driving.
+      cfg.rewards["action_prior_deviation"] = RewardTermCfg(
+        func=mdp.action_prior_deviation,
+        params={"action_name": "joint_pos", "power": 1.0},
+        weight=-0.2,
+      )
+      print("[INFO] prior reward: action_prior_deviation (weight -0.2)")
+    else:
+      print(
+        "[INFO] MJLAB_PRIOR_REWARD=input has no effect outside training with "
+        "blend='convex'."
+      )
+
+  elif reward_mode == "lyapunov":
+    if play:
+      print("[INFO] MJLAB_PRIOR_REWARD=lyapunov has no effect during play.")
+    else:
+      if tape is None:
+        raise ValueError(
+          "MJLAB_PRIOR_REWARD=lyapunov needs MJLAB_PRIOR_TAPE set to a *_prior.npz: "
+          "the shaping scores the tangent error against that tape's reference "
+          "trajectory, which is the trajectory P was solved around. There is no "
+          "reference to measure against with the default reference-pose prior."
+        )
+      # Must match the discount the policy is trained with, or the telescoping breaks.
+      gamma = unitree_g1_tracking_prior_ppo_runner_cfg().algorithm.gamma
+      params = {
+        "tape_file": tape,
+        "command_name": "motion",
+        "entity_name": "robot",
+        "gamma": gamma,
+        "kappa": LYAPUNOV_KAPPA,
+        # Bounds the (1 - gamma) residual so the policy cannot farm it by straying.
+        "v_half": LYAPUNOV_V_HALF,
+      }
+      cfg.rewards["lqr_lyapunov"] = RewardTermCfg(
+        func=mdp.lqr_lyapunov_shaping,
+        params=params,
+        # kappa carries the scale; leave the weight at 1 so there is one knob, not two.
+        weight=1.0,
+      )
+      print(
+        f"[INFO] prior reward: lqr_lyapunov_shaping (kappa {LYAPUNOV_KAPPA}, "
+        f"gamma {gamma}, P from {params.get('p_file', tape)})"
+      )
+
+  elif reward_mode == "lyapunov_dec":
+    if play:
+      print("[INFO] MJLAB_PRIOR_REWARD=lyapunov_dec has no effect during play.")
+    else:
+      if tape is None:
+        raise ValueError(
+          "MJLAB_PRIOR_REWARD=lyapunov_dec needs MJLAB_PRIOR_TAPE set to a "
+          "*_prior.npz: the Lyapunov condition is scored against that tape's "
+          "reference trajectory."
+        )
+      cfg.rewards["lqr_lyapunov_decrease"] = RewardTermCfg(
+        func=mdp.lqr_lyapunov_decrease,
+        params={
+          "tape_file": tape,
+          "command_name": "motion",
+          "entity_name": "robot",
+          "alpha": LYAPUNOV_ALPHA,
+          "form": "hinge",
+          "normalize": True,
+          "clip": 1.0,
+        },
+        weight=3.0,
+      )
+      print(f"[INFO] prior reward: lqr_lyapunov_decrease (alpha {LYAPUNOV_ALPHA})")
+
+  # Behavior-cloning pull toward the prior, not part of the MJLAB_PRIOR_REWARD switch
+  # above: exp(-mean sq error / std^2).
   # cfg.rewards["action_prior_exp"] = RewardTermCfg(
   #   func=mdp.action_prior_deviation_exp,
   #   params={
@@ -122,51 +204,5 @@ def unitree_g1_tracking_prior_env_cfg(
   #   weight=0.2,
   # )
   # print("[INFO] prior BC: exp kernel at weight 2.0, std 0.2 rad")
-
-  # MJLAB_PRIOR_LYAPUNOV: "tape" to read P from the prior tape, else a path to an npz.
-  # if not play:
-  #   if tape is None:
-  #     raise ValueError(
-  #       "MJLAB_PRIOR_LYAPUNOV needs MJLAB_PRIOR_TAPE set to a *_prior.npz: the shaping "
-  #       "scores the tangent error against that tape's reference trajectory, which is "
-  #       "the trajectory P was solved around. There is no reference to measure against "
-  #       "with the default reference-pose prior."
-  #     )
-    # Must match the discount the policy is trained with, or the telescoping breaks.
-    # gamma = unitree_g1_tracking_prior_ppo_runner_cfg().algorithm.gamma
-    # params = {
-    #   "tape_file": tape,
-    #   "command_name": "motion",
-    #   "entity_name": "robot",
-    #   "gamma": gamma,
-    #   "kappa": LYAPUNOV_KAPPA,
-    #   # Bounds the (1 - gamma) residual so the policy cannot farm it by straying.
-    #   "v_half": LYAPUNOV_V_HALF,
-    # }
-    # cfg.rewards["lqr_lyapunov"] = RewardTermCfg(
-    #   func=mdp.lqr_lyapunov_shaping,
-    #   params=params,
-    #   # kappa carries the scale; leave the weight at 1 so there is one knob, not two.
-    #   weight=1.0,
-    # )
-    # print(
-    #   f"[INFO] LQR shaping: kappa {LYAPUNOV_KAPPA}, gamma {gamma}, "
-    #   f"P from {params.get('p_file', tape)}"
-    # )
-
-    # Discrete-time Lyapunov condition V' <= (1 - alpha) V, hinged and normalized by V.
-    # cfg.rewards["lqr_lyapunov_decrease"] = RewardTermCfg(
-    #   func=mdp.lqr_lyapunov_decrease,
-    #   params={
-    #     "tape_file": tape,
-    #     "command_name": "motion",
-    #     "entity_name": "robot",
-    #     "alpha": LYAPUNOV_ALPHA,
-    #     "form": "hinge",
-    #     "normalize": True,
-    #     "clip": 1.0,
-    #   },
-    #   weight=3.0,
-    # )
 
   return cfg

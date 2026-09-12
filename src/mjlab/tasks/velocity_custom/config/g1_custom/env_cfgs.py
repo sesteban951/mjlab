@@ -4,12 +4,18 @@ Vendored from unitree_rl_mjlab; uses the self-contained velocity_custom base + m
 """
 
 from mjlab.asset_zoo.robots import (
-  G1_ACTION_SCALE,
   get_g1_robot_cfg,
 )
 from mjlab.asset_zoo.robots.unitree_g1.custom_dr import (
   add_custom_g1_actuator_delay,
   add_custom_g1_dr,
+)
+from mjlab.asset_zoo.robots.unitree_g1.custom_rewards import (
+  add_custom_g1_action_rate_split,
+)
+from mjlab.asset_zoo.robots.unitree_g1.g1_constants_mode11 import (
+  G1_MODE11_ACTION_SCALE,
+  G1_MODE11_ARTICULATION,
 )
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
@@ -74,9 +80,13 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   if cfg.scene.terrain is not None and cfg.scene.terrain.terrain_generator is not None:
     cfg.scene.terrain.terrain_generator.curriculum = True
 
+  # Match the lab robot's mode_machine 11 hardware (hip pitch on the 22.5:1 gearbox). Same g1.xml;
+  # only the actuator table, its derived PD gains and the hip-pitch action scale change. Applied
+  # before the actuator delay below so the delay is baked onto the mode-11 actuators.
+  cfg.scene.entities["robot"].articulation = G1_MODE11_ARTICULATION
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
-  joint_pos_action.scale = G1_ACTION_SCALE
+  joint_pos_action.scale = G1_MODE11_ACTION_SCALE
 
   cfg.viewer.body_name = "torso_link"
 
@@ -154,11 +164,14 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # left to the inherited base, which matches unitree_rl_mjlab.
   add_custom_g1_dr(cfg)
 
+  # Split the single action-rate penalty into limb (arms+legs) and waist groups.
+  add_custom_g1_action_rate_split(cfg)
+
   # Add 0-0.02s (0 to one control step) of randomized per-env actuator command
   # delay. Training only: deployment has its own latency, and play/eval mirrors
   # mjlab's convention of dropping perturbation-style randomization.
   if not play:
-    add_custom_g1_actuator_delay(cfg, min_delay_sec=0.0, max_delay_sec=0.02)
+    add_custom_g1_actuator_delay(cfg, min_delay_sec=0.0, max_delay_sec=0.04)
 
   # Apply play mode overrides.
   if play:

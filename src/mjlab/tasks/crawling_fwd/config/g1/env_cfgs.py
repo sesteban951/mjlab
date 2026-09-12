@@ -20,6 +20,7 @@ import mjlab
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.tasks.crawling_common.library import QPOS_JOINT_ORDER
 from mjlab.tasks.crawling_fwd import mdp
 from mjlab.tasks.crawling_fwd.mdp.commands import LibraryMotionCommandCfg
 from mjlab.tasks.tracking.config.g1_custom_contactrich.env_cfgs import (
@@ -45,39 +46,9 @@ IDLE_QPOS_CSV = (
   / "crawl_ff_loop_180_R_001__A229_library"
   / "qpos_idle.csv"
 )
-# G1 actuated-joint order for qpos_idle.csv columns 7:36. MUST match scripts/library_to_npz.py's
-# JOINT_NAMES (the order the pose was written in); a mismatch silently scrambles the default pose.
-_IDLE_JOINT_ORDER = (
-  "left_hip_pitch_joint",
-  "left_hip_roll_joint",
-  "left_hip_yaw_joint",
-  "left_knee_joint",
-  "left_ankle_pitch_joint",
-  "left_ankle_roll_joint",
-  "right_hip_pitch_joint",
-  "right_hip_roll_joint",
-  "right_hip_yaw_joint",
-  "right_knee_joint",
-  "right_ankle_pitch_joint",
-  "right_ankle_roll_joint",
-  "waist_yaw_joint",
-  "waist_roll_joint",
-  "waist_pitch_joint",
-  "left_shoulder_pitch_joint",
-  "left_shoulder_roll_joint",
-  "left_shoulder_yaw_joint",
-  "left_elbow_joint",
-  "left_wrist_roll_joint",
-  "left_wrist_pitch_joint",
-  "left_wrist_yaw_joint",
-  "right_shoulder_pitch_joint",
-  "right_shoulder_roll_joint",
-  "right_shoulder_yaw_joint",
-  "right_elbow_joint",
-  "right_wrist_roll_joint",
-  "right_wrist_pitch_joint",
-  "right_wrist_yaw_joint",
-)
+# G1 actuated-joint order for qpos_idle.csv columns 7:36: the mj-nlp qpos order, shared with
+# scripts/library_to_npz.py through crawling_common.library (one source, so it cannot drift).
+_IDLE_JOINT_ORDER = QPOS_JOINT_ORDER
 
 
 def _idle_default_joint_pos() -> dict[str, float]:

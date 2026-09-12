@@ -8,6 +8,7 @@ from mjlab.sensor import ContactSensor
 from mjlab.utils.lab_api.math import quat_error_magnitude
 
 from .commands import MotionCommand
+from .tvlqr import TvlqrGuidedJointPositionAction
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -133,3 +134,70 @@ def self_collision_cost(
     return hit.sum(dim=-1).float()  # [B]
   assert data.found is not None
   return data.found.squeeze(-1)
+
+
+##
+# CLF-RL: rewards built on the TVLQR that was designed around this trajectory.
+# See mdp/tvlqr.py -- the controller guides by reward and is never applied.
+##
+
+
+def _tvlqr(env: ManagerBasedRlEnv, action_name: str) -> TvlqrGuidedJointPositionAction:
+  term = env.action_manager.get_term(action_name)
+  if not isinstance(term, TvlqrGuidedJointPositionAction):
+    raise TypeError(
+      f"action term {action_name!r} is a {type(term).__name__}; the CLF rewards need a "
+      f"TvlqrGuidedJointPositionAction, which is what carries K, P and alpha"
+    )
+  return term
+
+
+def clf_decrease_rbf(
+  env: ManagerBasedRlEnv,
+  action_name: str,
+  sigma: float,
+  squared: bool = False,
+  normalize: bool = True,
+) -> torch.Tensor:
+  """Radial basis on the CLF decrease violation: ``exp(-viol / sigma^2)``, in [0, 1].
+
+  ``viol = max(V_{k+1} - V_k + alpha_k V_k, 0)`` is robot_rl's ``clf_decreasing_condition`` in the
+  discrete form the backward pass actually prescribes -- see ``tvlqr.violation``. Maximal when the
+  policy holds the decay rate the LQR guarantees, and one-sided, so exceeding it earns nothing.
+
+  ``alpha_k`` is the EXPORTED per-step rate, not a hand-set constant. That matters: robot_rl's
+  alpha is continuous (0.5-1.0 1/s) and the discrete equivalent at a 5 ms step is
+  ``1 - exp(-alpha*dt) ~ 0.0025``, so porting the number directly asks for ~150x the decay. The
+  measured schedule here sits in [2e-4, 6.8e-3] per step, i.e. [0.04, 1.4] 1/s -- which brackets
+  robot_rl's hand-picked value, and is the reason to read it off the design instead of guessing.
+
+  ``normalize=True`` (the default) uses the violation as a FRACTION of V -- see
+  ``tvlqr.violation_rel``. Keep it on: the raw violation spans four orders of magnitude on a
+  zero-action rollout (p5 0.3, p99 833) because V itself spans three, so no fixed ``sigma`` covers
+  it and the reward is either dead or saturated everywhere. The ratio sits at p50 0.08, p95 0.24.
+  ``normalize=False`` gives the unscaled quantity for diagnostics.
+
+  ``squared=True`` gives the textbook ``exp(-x^2 / sigma^2)`` instead of the ``exp(-x / sigma^2)``
+  form used here.
+  """
+  term = _tvlqr(env, action_name)
+  viol = term.violation_rel if normalize else term.violation
+  return torch.exp(-(viol**2 if squared else viol) / sigma**2)
+
+
+def qdes_imitation_rbf(
+  env: ManagerBasedRlEnv, action_name: str, sigma: float, squared: bool = False
+) -> torch.Tensor:
+  """Radial basis on how far the policy's command sits from the controller's: in [0, 1].
+
+  ``exp(-||qdes_policy - qdes_ctrl|| / sigma^2)`` with ``qdes_ctrl = u_bar_k + K_k dx`` and
+  ``qdes_policy = action * scale + offset``.
+
+  BOTH SIDES ARE IN RADIANS. ``qdes_policy`` is ``_processed_actions``, i.e. the policy output
+  AFTER scale and offset; differencing the raw action against ``qdes_ctrl`` would subtract a
+  dimensionless number from a joint angle. Both are also in this action term's joint order, which
+  is not the export's actuator order -- the term permutes K's rows on load.
+  """
+  term = _tvlqr(env, action_name)
+  err = torch.linalg.norm(term.qdes_policy - term.qdes_ctrl, dim=-1)
+  return torch.exp(-(err**2 if squared else err) / sigma**2)

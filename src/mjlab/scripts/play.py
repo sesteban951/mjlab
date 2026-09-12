@@ -3,6 +3,7 @@
 import os
 import sys
 import time as _time
+from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -14,6 +15,10 @@ import tyro
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.scripts._cli import maybe_print_top_level_help
+from mjlab.tasks.crawling_fwd.mdp.commands import (
+  LibraryMotionCommand,
+  LibraryMotionCommandCfg,
+)
 from mjlab.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.utils.os import get_wandb_checkpoint_path
@@ -49,11 +54,99 @@ class PlayConfig:
   viewer: Literal["auto", "native", "viser"] = "auto"
   no_terminations: bool = False
   """Disable all termination conditions (useful for viewing motions with dummy agents)."""
+  no_disturbances: bool = False
+  """Replay on the NOMINAL plant: drop every startup domain-randomization and interval (push)
+  event, and for tracking tasks zero the reference-state-init joint noise. Reset-mode events are
+  kept (they implement the reset itself). Play already disables pushes, observation noise and the
+  RSI pose/velocity noise; this removes what is left."""
+  twist: tuple[float, float, float] | None = None
+  """Gait-library tasks only: pin every env to this commanded twist, COMMA-separated ``vx,vy,wz``
+  (mjlab's tyro flags take tuples as one token): ``--twist 0,0,1.0`` for a left turn,
+  ``--twist 0,0,0`` to stand, ``--twist -0.6,0,0`` to walk backward. In the native viewer the
+  twist can also be driven live from the keyboard, see the key map printed at start-up; in viser,
+  from the "Twist command" sliders."""
   log_root: str = "logs/rsl_rl"
   """Root directory under which experiment logs are written."""
 
   # Internal flag used by demo script.
   _demo_mode: tyro.conf.Suppress[bool] = False
+
+
+def strip_disturbances(env_cfg) -> list[str]:
+  """Make ``env_cfg`` a nominal-plant replay (see ``PlayConfig.no_disturbances``).
+
+  Removes every event term whose mode is not ``reset`` -- startup DR (mass, COM, gains, friction,
+  armature, encoder bias, ...) and interval pushes -- and zeroes the tracking command's RSI joint
+  noise. Returns the names of the removed event terms."""
+  removed = [k for k, v in env_cfg.events.items() if v.mode != "reset"]
+  for k in removed:
+    env_cfg.events.pop(k)
+  motion_cmd = env_cfg.commands.get("motion")
+  if isinstance(motion_cmd, MotionCommandCfg):
+    motion_cmd.joint_position_range = (0.0, 0.0)
+    motion_cmd.pose_range = {}
+    motion_cmd.velocity_range = {}
+  return removed
+
+
+TELEOP_HELP = """[teleop] gait-library twist keys (native viewer; applied to ALL envs):
+  Up / Down          forward speed  +/- 0.05 m/s   (zeroes the yaw rate: translate XOR rotate)
+  PageUp / PageDown  yaw rate       +/- 0.1 rad/s  (left / right; zeroes the forward speed)
+  Delete             stop: zero twist -> the idle clip
+  Home               release the pin -> back to the task's own twist sampler
+  values clamp to the library's twist extent; the snapped clip is printed after each change
+  (letters and [ ] are avoided: MuJoCo's viewer binds them to render toggles and camera cycling)"""
+
+
+def make_twist_teleop(cmd: LibraryMotionCommand) -> Callable[[int], None]:
+  """Keyboard twist teleop for a gait-library command (see TELEOP_HELP).
+
+  Runs on the viewer thread, so it only calls ``set_fixed_twist`` (a mailbox the command drains
+  on the sim thread). Speed and yaw keys are mutually exclusive by design, matching the
+  differential-drive command space; on an omni library that is merely conservative."""
+  from mjlab.viewer.native.keys import (
+    KEY_DELETE,
+    KEY_DOWN,
+    KEY_HOME,
+    KEY_PAGE_DOWN,
+    KEY_PAGE_UP,
+    KEY_UP,
+  )
+
+  lo = cmd.motion.lib_twists.min(dim=0).values.tolist()
+  hi = cmd.motion.lib_twists.max(dim=0).values.tolist()
+  start = cmd.fixed_twist or tuple(float(v) for v in cmd.twist_command[0].tolist())
+  twist = [float(v) for v in start]
+
+  def clamp(i: int, v: float) -> float:
+    return round(min(max(v, lo[i]), hi[i]), 3)
+
+  def callback(key: int) -> None:
+    if key == KEY_UP:
+      twist[0], twist[2] = clamp(0, twist[0] + 0.05), 0.0
+    elif key == KEY_DOWN:
+      twist[0], twist[2] = clamp(0, twist[0] - 0.05), 0.0
+    elif key == KEY_PAGE_UP:
+      twist[0], twist[2] = 0.0, clamp(2, twist[2] + 0.1)
+    elif key == KEY_PAGE_DOWN:
+      twist[0], twist[2] = 0.0, clamp(2, twist[2] - 0.1)
+    elif key == KEY_DELETE:
+      twist[:] = [0.0, 0.0, 0.0]
+    elif key == KEY_HOME:
+      cmd.set_fixed_twist(None)
+      print("[teleop] pin released: back to the task's twist sampler")
+      return
+    else:
+      return
+    t = (twist[0], twist[1], twist[2])
+    cmd.set_fixed_twist(t)
+    snap = cmd.nearest_clip_twist(t)
+    print(
+      f"[teleop] twist vx {t[0]:+.2f} vy {t[1]:+.2f} wz {t[2]:+.2f}"
+      f"  -> clip vx {snap[0]:+.2f} vy {snap[1]:+.2f} wz {snap[2]:+.2f}"
+    )
+
+  return callback
 
 
 def run_play(task_id: str, cfg: PlayConfig):
@@ -71,6 +164,24 @@ def run_play(task_id: str, cfg: PlayConfig):
   if cfg.no_terminations:
     env_cfg.terminations = {}
     print("[INFO]: Terminations disabled")
+
+  # Nominal plant if requested: no domain randomization, no pushes, exact RSI.
+  if cfg.no_disturbances:
+    removed = strip_disturbances(env_cfg)
+    print(
+      f"[INFO]: Disturbances disabled (removed events: {removed}; RSI noise zeroed)"
+    )
+
+  # Pin the commanded twist (gait-library tasks).
+  if cfg.twist is not None:
+    lib_cmd_cfg = env_cfg.commands.get("motion")
+    if not isinstance(lib_cmd_cfg, LibraryMotionCommandCfg):
+      raise ValueError(
+        f"--twist needs a gait-library task (LibraryMotionCommandCfg); {task_id} has "
+        f"{type(lib_cmd_cfg).__name__}"
+      )
+    lib_cmd_cfg.fixed_twist = cfg.twist
+    print(f"[INFO]: Commanded twist pinned to {cfg.twist} for every env")
 
   # Check if this is a tracking task by checking for motion command.
   is_tracking_task = "motion" in env_cfg.commands and isinstance(
@@ -288,7 +399,12 @@ def run_play(task_id: str, cfg: PlayConfig):
     resolved_viewer = cfg.viewer
 
   if resolved_viewer == "native":
-    NativeMujocoViewer(env, policy).run()
+    key_callback = None
+    lib_cmd = env.unwrapped.command_manager._terms.get("motion")
+    if isinstance(lib_cmd, LibraryMotionCommand):
+      key_callback = make_twist_teleop(lib_cmd)
+      print(TELEOP_HELP)
+    NativeMujocoViewer(env, policy, key_callback=key_callback).run()
   elif resolved_viewer == "viser":
     ViserPlayViewer(env, policy, checkpoint_manager=ckpt_manager).run()
   else:

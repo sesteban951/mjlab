@@ -1,5 +1,3 @@
-from dataclasses import replace
-
 from mjlab.tasks.registry import register_mjlab_task
 from mjlab.tasks.tracking.rl import MotionTrackingOnPolicyRunner
 
@@ -15,11 +13,10 @@ _play_env_cfg = unitree_g1_custom_flat_tracking_env_cfg(
   has_state_estimation=False, play=True
 )
 
-# Stronger action-rate penalty (-0.1 -> -0.5) to curb high-frequency action chatter on hardware.
-# Scoped to THIS task only: ContactRich-Custom and the crawling tasks share the same env builder
-# but keep the base -0.1 (they override rewards on their own copies).
-for _cfg in (_env_cfg, _play_env_cfg):
-  _cfg.rewards["action_rate_l2"] = replace(_cfg.rewards["action_rate_l2"], weight=-0.5)
+# Action-rate history: this task once carried a single, elevated action-rate penalty (-0.5, up from
+# the base -0.1) to combat high-frequency action chatter on hardware. That is now handled by the
+# shared limb/waist split applied in the env builder (see custom_rewards), which keeps the torso
+# heavily damped (waist -0.5) while freeing the limbs (-0.15).
 
 register_mjlab_task(
   task_id="G1-Tracking-Custom",

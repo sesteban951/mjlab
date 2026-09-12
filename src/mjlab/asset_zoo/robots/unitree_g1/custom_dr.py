@@ -14,12 +14,16 @@ observation noise are disabled there).
 import math
 from dataclasses import dataclass, field, replace
 
+import torch
+
 from mjlab.actuator import BuiltinPositionActuatorCfg
 from mjlab.entity import EntityCfg
-from mjlab.envs import ManagerBasedRlEnvCfg
+from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.envs.mdp import dr
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
+
+_ROBOT_CFG = SceneEntityCfg("robot")
 
 
 @dataclass
@@ -44,8 +48,6 @@ class CustomDRCfg:
   pd_kd: tuple[float, float] = (0.8, 1.2)
   # Joint friction loss, added to nominal (N·m).
   joint_friction: tuple[float, float] = (0.0, 1.0)
-  # Joint armature scale factor (multiplicative).
-  joint_armature: tuple[float, float] = (0.95, 1.05)
   # Base (torso_link) mass scale factor (multiplicative). Applied via
   # pseudo_inertia so mass and inertia scale together (a density change).
   base_mass: tuple[float, float] = (0.9, 1.1)
@@ -62,9 +64,9 @@ def add_custom_g1_dr(
   """Apply the shared custom G1 DR base in place.
 
   Retunes the inherited ``base_com``, ``encoder_bias``, and ``foot_friction``
-  startup terms, and adds ``pd_gains``, ``joint_friction``, ``joint_armature``,
-  and ``base_mass`` (torso mass+inertia). Perturbation (``push_robot``) and reset
-  randomization are intentionally left to the inherited base config.
+  startup terms, and adds ``pd_gains``, ``joint_friction``, and ``base_mass``
+  (torso mass+inertia). Perturbation (``push_robot``) and reset randomization are
+  intentionally left to the inherited base config.
 
   Args:
     cfg: An already-built env config. Its ``events`` dict must already contain
@@ -101,15 +103,6 @@ def add_custom_g1_dr(
       "operation": "add",
     },
   )
-  cfg.events["joint_armature"] = EventTermCfg(
-    mode="startup",
-    func=dr.joint_armature,
-    params={
-      "asset_cfg": SceneEntityCfg("robot", joint_names=(".*",)),
-      "ranges": dr_cfg.joint_armature,
-      "operation": "scale",
-    },
-  )
   # Randomize torso mass and inertia together (a density change). pseudo_inertia
   # scales mass by e^(2*alpha), so a multiplicative mass-scale range (lo, hi)
   # maps to alpha_range = (0.5*ln(lo), 0.5*ln(hi)).
@@ -127,15 +120,24 @@ def add_custom_g1_dr(
 def add_custom_g1_actuator_delay(
   cfg: ManagerBasedRlEnvCfg,
   min_delay_sec: float = 0.0,
-  max_delay_sec: float = 0.02,
+  max_delay_sec: float = 0.04,
 ) -> None:
-  """Add per-env command delay to the G1 built-in position actuators in place.
+  """Add a constant per-env command delay to the G1 built-in position actuators.
 
-  Actuator delay is a built-in actuator property, not an event term: each step a
-  per-env lag is sampled uniformly in ``[min, max]`` physics steps and applied to
-  the command targets, modeling policy-to-motor latency. Delays are given in
-  seconds here and converted to physics steps via the sim timestep, and the lag is
-  re-sampled once per control step.
+  Models policy-to-motor latency (communication/bus delay), as opposed to sensor
+  pipeline latency. Each environment draws ONE lag uniformly in
+  ``[min, max]`` physics steps at episode reset and HOLDS it for the whole
+  episode, matching hardware where the comm delay is essentially fixed per unit
+  rather than re-randomized every control step.
+
+  Holding it constant takes two pieces:
+
+  * ``delay_hold_prob=1.0`` on the actuators, so the built-in delay buffer never
+    re-samples the lag mid-episode.
+  * a ``reset`` event (:func:`randomize_actuator_delay`), because the buffer
+    zeroes its lags on reset and with ``hold_prob=1`` would otherwise stay at
+    zero forever. The event runs after ``scene.reset()``, so it is what actually
+    assigns the latency.
 
   Rebuilds the robot entity functionally (via ``dataclasses.replace``) so the
   shared G1 actuator constants in ``g1_constants`` are left untouched.
@@ -159,6 +161,7 @@ def add_custom_g1_actuator_delay(
       act,
       delay_min_lag=min_lag,
       delay_max_lag=max_lag,
+      delay_hold_prob=1.0,  # never re-sample; the reset event sets the lag
       delay_update_period=cfg.decimation,
       delay_per_env_phase=True,
     )
@@ -170,3 +173,31 @@ def add_custom_g1_actuator_delay(
     robot_cfg,
     articulation=replace(robot_cfg.articulation, actuators=actuators),
   )
+
+  if max_lag > 0:
+    cfg.events["actuator_delay"] = EventTermCfg(
+      mode="reset",
+      func=randomize_actuator_delay,
+      params={"min_lag": min_lag, "max_lag": max_lag},
+    )
+
+
+def randomize_actuator_delay(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor | None,
+  min_lag: int,
+  max_lag: int,
+  asset_cfg: SceneEntityCfg = _ROBOT_CFG,
+) -> None:
+  """Draw one command lag per env at reset and hold it for the episode.
+
+  Paired with ``delay_hold_prob=1.0`` (see :func:`add_custom_g1_actuator_delay`):
+  the delay buffer zeroes its lags in ``scene.reset()`` and never re-samples, so
+  this term is what assigns the latency. Built-in actuators sharing a delay
+  config use one fused buffer, so setting the lag propagates across the group.
+  """
+  asset = env.scene[asset_cfg.name]
+  num = env.num_envs if env_ids is None else len(env_ids)
+  lags = torch.randint(min_lag, max_lag + 1, (num,), device=env.device)
+  for act in asset.actuators:
+    act.set_lags(lags, env_ids)

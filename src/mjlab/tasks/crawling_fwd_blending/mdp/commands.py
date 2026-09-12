@@ -111,14 +111,6 @@ class BlendingMotionCommand(FwdMotionCommand):
     return self._nlerp(self.motion.body_quat_w)
 
   @property
-  def body_lin_vel_w(self) -> torch.Tensor:
-    return self._lerp(self.motion.body_lin_vel_w)
-
-  @property
-  def body_ang_vel_w(self) -> torch.Tensor:
-    return self._lerp(self.motion.body_ang_vel_w)
-
-  @property
   def anchor_pos_w(self) -> torch.Tensor:
     return self._lerp_anchor(self.motion.body_pos_w) + self._env.scene.env_origins
 
@@ -126,12 +118,18 @@ class BlendingMotionCommand(FwdMotionCommand):
   def anchor_quat_w(self) -> torch.Tensor:
     return self._nlerp_anchor(self.motion.body_quat_w)
 
-  @property
-  def anchor_lin_vel_w(self) -> torch.Tensor:
+  # Velocities: override only the clip-frame gathers; the base's accessors rotate them into the
+  # robot's heading frame.
+  def _clip_body_lin_vel_w(self) -> torch.Tensor:
+    return self._lerp(self.motion.body_lin_vel_w)
+
+  def _clip_body_ang_vel_w(self) -> torch.Tensor:
+    return self._lerp(self.motion.body_ang_vel_w)
+
+  def _clip_anchor_lin_vel_w(self) -> torch.Tensor:
     return self._lerp_anchor(self.motion.body_lin_vel_w)
 
-  @property
-  def anchor_ang_vel_w(self) -> torch.Tensor:
+  def _clip_anchor_ang_vel_w(self) -> torch.Tensor:
     return self._lerp_anchor(self.motion.body_ang_vel_w)
 
 

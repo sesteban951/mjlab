@@ -99,7 +99,7 @@ class JointPositionActionWithPriorCfg(JointPositionActionCfg):
   lam: float = 5.0 / 6.0
   """Initial prior weight, in ``[0, 1]``. The prior gets ``lam`` of the authority and the policy ``1 - lam``."""
 
-  blend: Literal["convex", "residual", "nominal"] = "nominal"
+  blend: Literal["convex", "residual", "nominal"] = "residual"
   """How the policy and prior are combined.
   ``"convex"``: ``u = (1 - lam) * pi(o) + lam * u_prior``.
   ``"residual"``: ``u = u_prior + pi(o)``.

@@ -1,7 +1,7 @@
-"""Convert the mj-nlp crawl gait library into mjlab tracking-motion npz files.
+"""Convert an mj-nlp gait library into mjlab tracking-motion npz files.
 
-The library clips (``trajectories/crawl_ff_loop_180_R_001__A229_library/crawl_vp0_*.npz``) store
-per-frame full MuJoCo state
+The library clips (e.g. ``trajectories/library/crawl_diffdrive_library/*.npz``) store per-frame
+full MuJoCo state
 ``state = [qpos(36) | qvel(35)]`` for the G1. mjlab's tracking ``MotionLoader`` instead expects
 per-body world kinematics (``joint_pos, joint_vel, body_pos_w, body_quat_w, body_lin_vel_w,
 body_ang_vel_w``). This script FK-replays each clip through the mjlab G1 scene to produce that
@@ -12,14 +12,16 @@ Each source clip carries a ``twist`` field (``[vx, vy, wz]`` in m/s, m/s, rad/s)
 ``nominal_speed``; both are copied into the tracking npz so the command can select clips by twist.
 
 If the input dir also contains ``qpos_idle.csv`` (one G1 qpos row), it is FK-replayed and written
-as a held, zero-velocity clip (``crawl_fwd_vx_000.npz``) with twist ``[0, 0, 0]`` so the policy has
-an explicit static pose to track when commanded to stop. It is optional -- absent, near-zero twist
-commands just snap to the slowest crawl clip. Run once:
+as a held, zero-velocity clip (``idle_out``, default ``crawl_fwd_vx_000.npz``) with twist
+``[0, 0, 0]`` so the policy has an explicit static pose to track when commanded to stop. It is
+optional -- absent, near-zero twist commands just snap to the slowest clip. Run once:
 
   uv run python -m mjlab.scripts.library_to_npz
 
-Regenerate only if the env's control rate changes (``output_fps`` must equal ``1/step_dt`` =
-``1/(decimation*timestep)`` = 50 Hz for the tracking/crawling env).
+``input_fps`` must be the clips' own rate: 200 Hz for the crawl grids (sim_dt 5 ms), 100 Hz for
+the upright walk grids (10 ms) -- ``build_library`` passes each spec's. Regenerate only if the
+env's control rate changes (``output_fps`` must equal ``1/step_dt`` = ``1/(decimation*timestep)``
+= 50 Hz for the tracking/crawling env).
 """
 
 import glob
@@ -36,42 +38,13 @@ from mjlab.entity import Entity
 from mjlab.scene import Scene
 from mjlab.scripts.csv_to_npz import MotionLoader
 from mjlab.sim.sim import Simulation, SimulationCfg
+from mjlab.tasks.crawling_common.library import QPOS_JOINT_ORDER
 from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg
 
 _REPO_ROOT = Path(mjlab.MJLAB_SRC_PATH).parent.parent
 
 # The 29 actuated G1 joints, in the order the library `state` stores them (same as csv_to_npz).
-JOINT_NAMES = (
-  "left_hip_pitch_joint",
-  "left_hip_roll_joint",
-  "left_hip_yaw_joint",
-  "left_knee_joint",
-  "left_ankle_pitch_joint",
-  "left_ankle_roll_joint",
-  "right_hip_pitch_joint",
-  "right_hip_roll_joint",
-  "right_hip_yaw_joint",
-  "right_knee_joint",
-  "right_ankle_pitch_joint",
-  "right_ankle_roll_joint",
-  "waist_yaw_joint",
-  "waist_roll_joint",
-  "waist_pitch_joint",
-  "left_shoulder_pitch_joint",
-  "left_shoulder_roll_joint",
-  "left_shoulder_yaw_joint",
-  "left_elbow_joint",
-  "left_wrist_roll_joint",
-  "left_wrist_pitch_joint",
-  "left_wrist_yaw_joint",
-  "right_shoulder_pitch_joint",
-  "right_shoulder_roll_joint",
-  "right_shoulder_yaw_joint",
-  "right_elbow_joint",
-  "right_wrist_roll_joint",
-  "right_wrist_pitch_joint",
-  "right_wrist_yaw_joint",
-)
+JOINT_NAMES = QPOS_JOINT_ORDER
 
 _LOG_KEYS = (
   "joint_pos",
@@ -268,6 +241,7 @@ def main(
   input_fps: float = 200.0,
   output_fps: float = 50.0,
   device: str = "cuda:0",
+  idle_out: str = _IDLE_OUT,
 ):
   """Convert every ``*.npz`` in ``input_dir`` (mj-nlp ``[qpos|qvel]`` schema) to tracking npz.
 
@@ -277,9 +251,11 @@ def main(
     input_dir: Folder of library clips (e.g.
       ``trajectories/crawl_ff_loop_180_R_001__A229_library``).
     output_dir: Where to write the tracking-format clips (basename preserved).
-    input_fps: Sample rate of the library clips (200 Hz for the mj-nlp crawl library).
+    input_fps: Sample rate of the library clips (200 Hz for the mj-nlp crawl grids, 100 Hz for
+      the upright walk grids).
     output_fps: Output rate; MUST equal the env control rate 1/step_dt (50 Hz).
     device: Torch/sim device.
+    idle_out: Filename of the converted idle clip (written into ``output_dir``).
   """
   if device.startswith("cuda") and not torch.cuda.is_available():
     print("[WARNING]: CUDA unavailable, falling back to CPU (slow).")
@@ -326,14 +302,14 @@ def main(
     )
 
   # Optional static idle pose -> a held, zero-velocity zero-twist clip. Every clip in a library must
-  # share the same frame count, so the idle is held for the crawl clips' output length.
+  # share the same frame count, so the idle is held for the gait clips' output length.
   idle_csv = os.path.join(input_dir, _IDLE_CSV)
   has_idle = os.path.exists(idle_csv)
   if has_idle:
     idle_qpos = np.loadtxt(idle_csv, delimiter=",")
-    # Align the idle pose's heading (yaw about world z) to the crawl clips, so a crawl<->idle
-    # transition is a posture change only, not a spurious ~50 deg yaw rotation. All crawl clips
-    # share one heading; use the first clip as the reference.
+    # Align the idle pose's heading (yaw about world z) to the gait clips, so a gait<->idle
+    # transition is a posture change only, not a spurious ~50 deg yaw rotation. All clips of a
+    # library share one heading; use the first clip as the reference.
     ref_yaw = _yaw_about_z(np.load(files[0])["state"][0, 3:7])
     idle_yaw = _yaw_about_z(idle_qpos[3:7])
     dyaw = ref_yaw - idle_yaw
@@ -342,16 +318,16 @@ def main(
     x, y = float(idle_qpos[0]), float(idle_qpos[1])
     idle_qpos[0], idle_qpos[1] = c * x - s * y, s * x + c * y
     print(
-      f"  idle yaw-aligned to crawl heading: {np.degrees(idle_yaw):+.1f} -> "
+      f"  idle yaw-aligned to gait heading: {np.degrees(idle_yaw):+.1f} -> "
       f"{np.degrees(ref_yaw):+.1f} deg (dyaw {np.degrees(dyaw):+.1f})"
     )
     log = _idle_to_log(
       sim, scene, robot, joint_indexes, idle_qpos, num_frames, int(output_fps)
     )
-    out_path = os.path.join(output_dir, _IDLE_OUT)
+    out_path = os.path.join(output_dir, idle_out)
     np.savez(out_path, **log)
     print(
-      f"  {_IDLE_CSV} -> {_IDLE_OUT} (static, held {num_frames} frames, v=0)  "
+      f"  {_IDLE_CSV} -> {idle_out} (static, held {num_frames} frames, v=0)  "
       f"saved to {out_path}"
     )
   else:
