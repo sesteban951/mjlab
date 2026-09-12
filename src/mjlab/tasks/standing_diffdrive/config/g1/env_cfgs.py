@@ -72,6 +72,8 @@ def unitree_g1_standing_diffdrive_env_cfg(play: bool = False) -> ManagerBasedRlE
   """G1 upright differential-drive walking: translate(fwd/bck)-XOR-rotate command + blending."""
   cfg = unitree_g1_custom_flat_tracking_env_cfg(has_state_estimation=False, play=play)
 
+  # mode_machine 11 (hip pitch on the 22.5:1 gearbox) is inherited from the custom tracking base.
+
   # --- start on, and centre the action space on, the standing idle pose ---
   # The joint-position action is applied as ``target = default_joint_pos + scale*action``, so the
   # initial state's joint angles are where a zero action sits. Use the idle pose (the same csv that
@@ -175,8 +177,7 @@ def unitree_g1_standing_diffdrive_env_cfg(play: bool = False) -> ManagerBasedRlE
     params={"command_name": "motion", "std": 0.4},
   )
 
-  # Action-rate penalty unified to -0.2 across the custom tasks (the tracking base has -0.1;
-  # G1-Tracking-Custom applies -0.2 at registration, not inside its cfg function, so re-apply).
-  cfg.rewards["action_rate_l2"] = replace(cfg.rewards["action_rate_l2"], weight=-0.2)
+  # Action-rate penalty comes from the shared limb/waist split applied by the custom tracking
+  # builder (custom_rewards.add_custom_g1_action_rate_split); nothing to re-apply here.
 
   return cfg
