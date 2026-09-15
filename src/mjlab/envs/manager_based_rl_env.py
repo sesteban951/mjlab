@@ -114,6 +114,9 @@ class ManagerBasedRlEnvCfg:
   rewards: dict[str, RewardTermCfg] = field(default_factory=dict)
   """Reward terms configuration."""
 
+  reward_groups: dict[str, tuple[str, ...]] = field(default_factory=dict)
+  """Named sums of reward terms, logged as ``Train/r_<group>`` for plotting."""
+
   terminations: dict[str, TerminationTermCfg] = field(default_factory=dict)
   """Termination terms configuration. If empty, episodes never reset. Use
   ``mdp.time_out`` with ``time_out=True`` for episode time limits."""
@@ -327,7 +330,10 @@ class ManagerBasedRlEnv:
     self.termination_manager = TerminationManager(self.cfg.terminations, self)
     print_info(f"[INFO] {self.termination_manager}")
     self.reward_manager = RewardManager(
-      self.cfg.rewards, self, scale_by_dt=self.cfg.scale_rewards_by_dt
+      self.cfg.rewards,
+      self,
+      scale_by_dt=self.cfg.scale_rewards_by_dt,
+      groups=self.cfg.reward_groups,
     )
     print_info(f"[INFO] {self.reward_manager}")
     if len(self.cfg.curriculum) > 0:

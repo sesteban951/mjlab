@@ -22,6 +22,9 @@ G1_XML: Path = (
 )
 assert G1_XML.exists()
 
+G1_LOCKED_WRISTS_XML: Path = G1_XML.parent / "g1_locked_wrists.xml"
+assert G1_LOCKED_WRISTS_XML.exists()
+
 
 def get_spec() -> mujoco.MjSpec:
   return mujoco.MjSpec.from_file(str(G1_XML))
@@ -39,6 +42,11 @@ assert G1_SPHERE_FEET_XML.exists()
 
 def get_sphere_feet_spec() -> mujoco.MjSpec:
   return mujoco.MjSpec.from_file(str(G1_SPHERE_FEET_XML))
+
+
+def get_locked_wrists_spec() -> mujoco.MjSpec:
+  """G1 with the six wrist joints held at zero, matching mj-nlp's solve model."""
+  return mujoco.MjSpec.from_file(str(G1_LOCKED_WRISTS_XML))
 
 
 ##
@@ -311,6 +319,19 @@ def get_g1_sphere_feet_robot_cfg() -> EntityCfg:
     spec_fn=get_sphere_feet_spec,
     articulation=G1_ARTICULATION,
   )
+
+
+def get_g1_locked_wrists_robot_cfg() -> EntityCfg:
+  """G1 with the wrists pinned by equality, for replaying tapes solved that way.
+
+  Same nq/nv/nu, joint order and actuator order as :func:`get_g1_robot_cfg`; only the
+  six equality constraints are added. Use it when a control tape was designed against
+  mj-nlp's ``g1_29dof_locked_wrists.xml``, whose wrist commands ask for motion the
+  constraint absorbs.
+  """
+  cfg = get_g1_robot_cfg()
+  cfg.spec_fn = get_locked_wrists_spec
+  return cfg
 
 
 G1_ACTION_SCALE: dict[str, float] = {}

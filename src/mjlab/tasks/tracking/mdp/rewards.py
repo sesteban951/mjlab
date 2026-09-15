@@ -182,7 +182,15 @@ def clf_decrease_rbf(
   """
   term = _tvlqr(env, action_name)
   viol = term.violation_rel if normalize else term.violation
-  return torch.exp(-(viol**2 if squared else viol) / sigma**2)
+  return torch.exp(-(viol**2 if squared else viol) / sigma**2) * term.in_clip
+
+
+def clf_value_kernel(
+  env: ManagerBasedRlEnv, action_name: str, beta: float
+) -> torch.Tensor:
+  """``(1 + V / V_ref,k)^-beta`` in (0, 1]: bounded-elasticity tracking on the CLF value."""
+  term = _tvlqr(env, action_name)
+  return (1.0 + term.v / term.v_ref) ** -beta * term.in_clip
 
 
 def qdes_imitation_rbf(
@@ -200,4 +208,4 @@ def qdes_imitation_rbf(
   """
   term = _tvlqr(env, action_name)
   err = torch.linalg.norm(term.qdes_policy - term.qdes_ctrl, dim=-1)
-  return torch.exp(-(err**2 if squared else err) / sigma**2)
+  return torch.exp(-(err**2 if squared else err) / sigma**2) * term.in_clip

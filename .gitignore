@@ -21,3 +21,17 @@ benchmark_results/
 # sergio custom
 *.mp4
 .claude/
+# Scratch ablation runners.
+scripts/tools/ablate_robust_sideroll.sh
+scripts/tools/ablate_sideroll_traj.sh
+
+# Local-only tests.
+tests/test_action_with_prior.py
+tests/test_box_obstacle_terrain.py
+tests/test_envs_curriculums.py
+tests/test_metrics_manager.py
+tests/test_prior_blend_sweep.py
+tests/test_rewards.py
+tests/test_tracking_prior_ablation.py
+tests/test_tracking_prior_metrics.py
+tests/test_tracking_prior_rewards.py

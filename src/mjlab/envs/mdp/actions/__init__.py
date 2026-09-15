@@ -5,6 +5,18 @@ from mjlab.envs.mdp.actions.action_with_prior import (
   JointPositionActionWithPriorCfg as JointPositionActionWithPriorCfg,
 )
 from mjlab.envs.mdp.actions.action_with_prior import (
+  JointPositionPriorReplayAction as JointPositionPriorReplayAction,
+)
+from mjlab.envs.mdp.actions.action_with_prior import (
+  JointPositionPriorReplayActionCfg as JointPositionPriorReplayActionCfg,
+)
+from mjlab.envs.mdp.actions.action_with_prior import (
+  JointPriorAction as JointPriorAction,
+)
+from mjlab.envs.mdp.actions.action_with_prior import (
+  JointPriorActionCfg as JointPriorActionCfg,
+)
+from mjlab.envs.mdp.actions.action_with_prior import (
   JointPriorTerm as JointPriorTerm,
 )
 from mjlab.envs.mdp.actions.action_with_prior import (

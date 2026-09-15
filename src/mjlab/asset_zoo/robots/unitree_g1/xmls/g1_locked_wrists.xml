@@ -1,0 +1,31 @@
+<mujoco model="g1_29dof_locked_wrists">
+  <!-- g1.xml with the six wrist joints held at zero by equality constraints, matching
+       mj-nlp's models/unitree_g1/g1_29dof_locked_wrists.xml.
+
+       nq/nv/nu, the joint order and the actuator order are unchanged, so a tape, a
+       reference clip and an LQR gain schedule built against g1.xml all still index
+       correctly. Replay a tape solved under this lock on the unlocked model and the six
+       wrist commands ask for motion the constraint was absorbing: on the sideroll clip
+       that costs 844 frames of 844 down to 171.
+
+       The constraint is COMPLIANT, not a weld. At the default solref 0.02 1 the wrists
+       still travel ~0.117 rad under it, which is what the solve's own reference for those
+       joints is, so the wrist actuators keep real authority through it. Do not read this
+       as pinning them rigidly, and do not zero the tape's wrist commands to compensate.
+
+       polycoef="0 0 0 0 0" with joint2 omitted means "hold joint1 at its own qpos0", and
+       every wrist joint here has no ref attribute, so qpos0 = 0.
+
+       solref is left at the default 0.02 1. The time constant must be >= 2*timestep for a
+       stable constraint; mjlab's tracking tasks run at 0.005, so 0.02 has margin. Tighten
+       solimp, not solref, if the residual motion is too large. -->
+  <include file="g1.xml"/>
+  <equality>
+    <joint name="lock/left_wrist_roll" joint1="left_wrist_roll_joint" polycoef="0 0 0 0 0"/>
+    <joint name="lock/left_wrist_pitch" joint1="left_wrist_pitch_joint" polycoef="0 0 0 0 0"/>
+    <joint name="lock/left_wrist_yaw" joint1="left_wrist_yaw_joint" polycoef="0 0 0 0 0"/>
+    <joint name="lock/right_wrist_roll" joint1="right_wrist_roll_joint" polycoef="0 0 0 0 0"/>
+    <joint name="lock/right_wrist_pitch" joint1="right_wrist_pitch_joint" polycoef="0 0 0 0 0"/>
+    <joint name="lock/right_wrist_yaw" joint1="right_wrist_yaw_joint" polycoef="0 0 0 0 0"/>
+  </equality>
+</mujoco>

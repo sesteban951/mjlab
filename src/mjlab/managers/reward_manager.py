@@ -56,6 +56,7 @@ class RewardManager(ManagerBase):
     env: ManagerBasedRlEnv,
     *,
     scale_by_dt: bool = True,
+    groups: dict[str, tuple[str, ...]] | None = None,
   ):
     self._term_names: list[str] = list()
     self._term_cfgs: list[RewardTermCfg] = list()
@@ -64,6 +65,15 @@ class RewardManager(ManagerBase):
 
     self.cfg = deepcopy(cfg)
     super().__init__(env=env)
+    # Named sums of terms, logged as Train/r_<group> on the Episode_Reward scale. A
+    # member that is not an active term contributes zero, so every arm of an
+    # ablation logs the same curves; it is reported rather than raised.
+    self._groups: dict[str, tuple[str, ...]] = {}
+    for group, members in (groups or {}).items():
+      missing = [m for m in members if m not in self._term_names]
+      if missing:
+        print(f"[INFO] reward group {group!r}: inactive members {missing}")
+      self._groups[group] = tuple(m for m in members if m in self._term_names)
     self._episode_sums = dict()
     for term_name in self._term_names:
       self._episode_sums[term_name] = torch.zeros(
@@ -108,6 +118,12 @@ class RewardManager(ManagerBase):
       extras["Episode_Reward/" + key] = (
         episodic_sum_avg / self._env.max_episode_length_s
       )
+    for group, members in self._groups.items():
+      extras["Train/r_" + group] = sum(
+        (extras["Episode_Reward/" + m] for m in members),
+        torch.zeros((), device=self.device),
+      )
+    for key in self._episode_sums.keys():
       self._episode_sums[key][env_ids] = 0.0
     for term_cfg in self._class_term_cfgs:
       term_cfg.func.reset(env_ids=env_ids)

@@ -84,3 +84,15 @@ def bad_motion_body_pos_z_only(
     - command.robot_body_pos_w[:, body_indexes, -1]
   )
   return torch.any(error > threshold, dim=-1)
+
+
+def motion_complete(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+  """True on the step that plays the clip's last frame.
+
+  Makes an episode exactly one playthrough of a ONE-SHOT clip; without it the command runs
+  off the end and ``_resample_command`` teleports the robot mid-episode. Terminations are
+  evaluated before the command advances, so this fires on the last frame, not after it.
+  Register with ``time_out=True``: finishing is success, so the value must bootstrap.
+  """
+  command = cast(MotionCommand, env.command_manager.get_term(command_name))
+  return command.time_steps >= command.motion.time_step_total - 1

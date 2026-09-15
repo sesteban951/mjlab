@@ -17,10 +17,7 @@ from mjlab.utils.lab_api.math import (
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
-  from mjlab.envs.mdp.actions import (
-    JointPositionActionWithPrior,
-    JointPositionActionWithPriorCfg,
-  )
+  from mjlab.envs.mdp.actions import JointPriorAction, JointPriorActionCfg
 
 
 def motion_reference_joint_pos(
@@ -89,13 +86,21 @@ class motion_tape_prior:
   own conventions (base rotation in the reference's frame, base angular velocity in
   the body frame), which is what the gains were designed against. Otherwise the
   recorded ``u`` is replayed open loop.
+
+  ``clip_to_joint_limits`` defaults on, which is right wherever the prior is a
+  behavior-cloning target: the policy should be pulled toward a reachable pose. It is
+  wrong wherever the prior is the applied control, because a position setpoint outside
+  the joint range is how a servo asks for its full torque -- mjlab builds these
+  actuators ``ctrllimited=False`` for exactly that reason, and clamping a solved tape
+  to 90% of the range deletes up to 1.5 rad of the target it asked for. ``play_prior``
+  therefore passes it off; leave it alone in a training config.
   """
 
   def __init__(
     self,
-    cfg: JointPositionActionWithPriorCfg,
+    cfg: JointPriorActionCfg,
     env: ManagerBasedRlEnv,
-    term: JointPositionActionWithPrior,
+    term: JointPriorAction,
   ) -> None:
     tape = np.load(cfg.prior_params["tape_file"])
     device = env.device
@@ -119,6 +124,11 @@ class motion_tape_prior:
     self._u = _to("u")[:, cols]
     self._entity = env.scene[cfg.entity_name]
     self._num_frames = self._u.shape[0]
+    # The last evaluation's pieces, unclipped, for diagnostics of the policy's input.
+    nu = self._u.shape[1]
+    self.feedforward_target = torch.zeros(env.num_envs, nu, device=device)
+    self.feedback_correction = torch.zeros(env.num_envs, nu, device=device)
+    self.closed_loop_target = torch.zeros(env.num_envs, nu, device=device)
 
     self._gain: torch.Tensor | None = None
     if "gain" in tape:
@@ -148,12 +158,17 @@ class motion_tape_prior:
     command = cast(MotionCommand, env.command_manager.get_term(command_name))
     k = command.time_steps.clamp(max=self._num_frames - 1)
 
-    if feedback and self._gain is not None:
-      target = self._feedforward[k] + (alpha_scale * self._alpha[k]).unsqueeze(-1) * (
+    if self._gain is not None:
+      uff = self._feedforward[k]
+      ufb = (alpha_scale * self._alpha[k]).unsqueeze(-1) * (
         torch.bmm(self._gain[k], self._state_error(env, k).unsqueeze(-1)).squeeze(-1)
       )
     else:
-      target = self._u[k]
+      uff, ufb = self._u[k], torch.zeros_like(self._u[k])
+    self.feedforward_target[:] = uff
+    self.feedback_correction[:] = ufb
+    self.closed_loop_target[:] = uff + ufb
+    target = self.closed_loop_target if feedback and self._gain is not None else uff
 
     if clip_to_joint_limits and joint_ids is not None:
       limits = self._entity.data.soft_joint_pos_limits[:, joint_ids]

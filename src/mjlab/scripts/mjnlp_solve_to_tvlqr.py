@@ -48,6 +48,8 @@ def main(
   output_file: str,
   model_file: str | None = None,
   alpha_per_step: float = 0.0,
+  cost_to_go_key: str = "cost_to_go",
+  like_export: str | None = None,
 ) -> None:
   """Convert an mj-nlp solve npz to mjlab's TVLQR export schema.
 
@@ -58,17 +60,32 @@ def main(
       the solve's own ``model`` field.
     alpha_per_step: Constant per-step CLF decay rate written to ``alpha``. The default of
       0 asks only that V not increase; see the module docstring.
+    cost_to_go_key: Which array in the solve becomes ``P``. Solves that ship more than one
+      cost-to-go (e.g. a closed-loop Lyapunov P alongside ``cost_to_go_optimal``) select
+      between them here.
+    like_export: Borrow ``dof_names``, ``actuator_dof_index``, ``u_lb`` and ``u_ub`` from
+      an existing export instead of the XML, for when the solve's model is not on this
+      machine. Shapes are checked against it, so a solve from a different model is refused.
   """
   solve = np.load(solve_file, allow_pickle=True)
-  missing = [k for k in _RENAME if k not in solve.files]
+  rename = dict(_RENAME)
+  if cost_to_go_key != "cost_to_go":
+    del rename["cost_to_go"]
+    rename[cost_to_go_key] = "P"
+  missing = [k for k in rename if k not in solve.files]
   if missing:
     raise KeyError(f"{solve_file} has no {missing}; it is not an mj-nlp LQR solve.")
 
-  xml = model_file or str(solve["model"])
-  model = mujoco.MjModel.from_xml_path(xml)
-  nq, nv, nu = model.nq, model.nv, model.nu
+  if like_export is not None:
+    ref = np.load(like_export)
+    nq, nv, nu = int(ref["nq"]), int(ref["nv"]), int(ref["nu"])
+    xml = str(ref["model"])
+  else:
+    xml = model_file or str(solve["model"])
+    model = mujoco.MjModel.from_xml_path(xml)
+    nq, nv, nu = model.nq, model.nv, model.nu
 
-  out = {k: np.asarray(solve[src], dtype=np.float64) for src, k in _RENAME.items()}
+  out = {k: np.asarray(solve[src], dtype=np.float64) for src, k in rename.items()}
   n = out["u_bar"].shape[0]
 
   # Shapes the loader relies on. Checked here so a mismatched solve fails with a sentence
@@ -86,23 +103,35 @@ def main(
         f"nq={nq}, nv={nv}, nu={nu} and n={n} steps."
       )
 
-  # The tangent basis: the free joint's 6 dofs, then one entry per hinge, in model dof order.
-  # The loader strips the prefix and checks dof_names[6:nv] against the entity's joint order.
-  joint_names = [
-    mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(model.njnt)
-  ]
-  dof_names: list[str] = []
-  for j, name in enumerate(joint_names):
-    width = nv - model.jnt_dofadr[j] if j + 1 == model.njnt else 0
-    width = (
-      model.jnt_dofadr[j + 1] - model.jnt_dofadr[j] if j + 1 < model.njnt else width
-    )
-    dof_names.extend([f"{name}[{i}]" for i in range(width)] if width > 1 else [name])
+  if like_export is not None:
+    # Model-derived metadata borrowed wholesale; only P differs in the P-swap case.
+    dof_names = list(ref["dof_names"])
+    actuator_dof_index = ref["actuator_dof_index"]
+    u_lb, u_ub = ref["u_lb"].copy(), ref["u_ub"].copy()
+    if len(dof_names) != nv or len(u_lb) != nu:
+      raise ValueError(
+        f"{like_export} does not describe a model with nv={nv}, nu={nu}."
+      )
+  else:
+    # The tangent basis: the free joint's 6 dofs, then one entry per hinge, in dof order.
+    # The loader strips the prefix and checks dof_names[6:nv] against the entity's joints.
+    joint_names = [
+      mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j) for j in range(model.njnt)
+    ]
+    dof_names = []
+    for j, name in enumerate(joint_names):
+      width = nv - model.jnt_dofadr[j] if j + 1 == model.njnt else 0
+      width = (
+        model.jnt_dofadr[j + 1] - model.jnt_dofadr[j] if j + 1 < model.njnt else width
+      )
+      dof_names.extend([f"{name}[{i}]" for i in range(width)] if width > 1 else [name])
 
-  # Which dof each actuator drives, in the solve's actuator (and so u_bar/K row) order.
-  actuator_dof_index = np.array(
-    [model.jnt_dofadr[model.actuator_trnid[a, 0]] for a in range(nu)], dtype=np.int64
-  )
+    # Which dof each actuator drives, in the solve's actuator (and so u_bar/K row) order.
+    actuator_dof_index = np.array(
+      [model.jnt_dofadr[model.actuator_trnid[a, 0]] for a in range(nu)], dtype=np.int64
+    )
+    u_lb = model.actuator_ctrlrange[:, 0].copy()
+    u_ub = model.actuator_ctrlrange[:, 1].copy()
 
   dt = (
     float(np.diff(np.asarray(solve["time"])).mean()) if "time" in solve.files else 0.0
@@ -114,8 +143,8 @@ def main(
     output_file,
     **out,
     alpha=np.full(n, float(alpha_per_step)),
-    u_lb=model.actuator_ctrlrange[:, 0].copy(),
-    u_ub=model.actuator_ctrlrange[:, 1].copy(),
+    u_lb=u_lb,
+    u_ub=u_ub,
     dof_names=np.array(dof_names),
     actuator_dof_index=actuator_dof_index,
     nq=nq,
@@ -132,13 +161,15 @@ def main(
     if "actuator_mode" in solve.files
     else "position",
     cost_to_go_kind=str(solve["cost_to_go_kind"])
-    if "cost_to_go_kind" in solve.files
-    else "",
+    if "cost_to_go_kind" in solve.files and cost_to_go_key == "cost_to_go"
+    else cost_to_go_key,
   )
+  borrowed = f", metadata from {like_export}" if like_export else ""
   print(
     f"[INFO] wrote {output_file}\n"
     f"       n={n} steps at dt={dt} ({n * dt:.3f} s), nq={nq} nv={nv} nu={nu}\n"
     f"       alpha = {alpha_per_step} per step (constant)\n"
+    f"       P from '{cost_to_go_key}'{borrowed}\n"
     f"       the env's physics timestep MUST be {dt} or the loader will refuse it."
   )
 

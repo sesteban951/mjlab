@@ -57,6 +57,17 @@ class CustomDRCfg:
   foot_friction: tuple[float, float] = (0.3, 1.6)
 
 
+@dataclass
+class ContactDRCfg:
+  """Ranges for the G1 contact randomization; a mild band around MuJoCo's stock solref."""
+
+  # Contact spring time constant (s). Smaller is stiffer. MuJoCo clamps it to 2 * timestep,
+  # so a bound under that floor is silently truncated and bounces off hard impacts.
+  solref_timeconst: tuple[float, float] = (0.012, 0.030)
+  # Contact damping ratio. 1.0 is critically damped; below 1 bounces.
+  solref_dampratio: tuple[float, float] = (0.9, 1.1)
+
+
 def add_custom_g1_dr(
   cfg: ManagerBasedRlEnvCfg,
   dr_cfg: CustomDRCfg | None = None,
@@ -113,6 +124,46 @@ def add_custom_g1_dr(
     params={
       "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
       "alpha_range": (0.5 * math.log(mass_lo), 0.5 * math.log(mass_hi)),
+    },
+  )
+
+
+def add_custom_g1_contact_dr(
+  cfg: ManagerBasedRlEnvCfg,
+  dr_cfg: ContactDRCfg | None = None,
+) -> None:
+  """Randomize contact solref over the G1's collision geoms, one draw per env at startup.
+
+  Shared across geoms, since surface compliance belongs to the ground rather than to each
+  foot capsule. Feet carry ``priority=1``, so their draw decides foot-ground contact
+  outright. Complements ``foot_friction`` in :func:`add_custom_g1_dr`.
+
+  Args:
+    cfg: An already-built env config whose ``robot`` entity uses the G1 collision cfg.
+    dr_cfg: Tunable ranges. Defaults to :class:`ContactDRCfg`.
+  """
+  if dr_cfg is None:
+    dr_cfg = ContactDRCfg()
+
+  # Under the floor the draws collapse onto it, and the clamped contact rebounds off hard
+  # impacts (e ~= 0.17 on a 1 m drop) even at dampratio 1.
+  min_timeconst = 2.0 * cfg.sim.mujoco.timestep
+  if dr_cfg.solref_timeconst[0] <= min_timeconst:
+    raise ValueError(
+      f"solref timeconst lower bound {dr_cfg.solref_timeconst[0]} is at or below "
+      f"2 * timestep ({min_timeconst}), where MuJoCo clamps: the range would be "
+      "silently truncated and the clamped contact bounces numerically."
+    )
+
+  cfg.events["contact_solref"] = EventTermCfg(
+    mode="startup",
+    func=dr.geom_solref,
+    params={
+      "asset_cfg": SceneEntityCfg("robot", geom_names=(".*_collision",)),
+      "ranges": {0: dr_cfg.solref_timeconst, 1: dr_cfg.solref_dampratio},
+      "axes": [0, 1],
+      "operation": "abs",
+      "shared_random": True,
     },
   )
 

@@ -43,6 +43,13 @@ def flat(**overrides: Any) -> terrain_gen.BoxFlatTerrainCfg:
 
 
 @terrain_preset
+def tilted_plane(**overrides: Any) -> terrain_gen.BoxTiltedPlaneTerrainCfg:
+  defaults: dict[str, Any] = dict(max_tilt_deg=5.0)
+  defaults.update(overrides)
+  return terrain_gen.BoxTiltedPlaneTerrainCfg(**defaults)
+
+
+@terrain_preset
 def pyramid_stairs(**overrides: Any) -> terrain_gen.BoxPyramidStairsTerrainCfg:
   defaults: dict[str, Any] = dict(
     step_height_range=(0.0, 0.2),

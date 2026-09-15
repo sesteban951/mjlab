@@ -2119,3 +2119,69 @@ def test_pair_friction_invalid_name(pair_env):
   with pytest.raises(ValueError, match="nonexistent_pair"):
     cfg = SceneEntityCfg("robot", pair_names=("nonexistent_pair",))
     cfg.resolve(env.scene)
+
+
+# geom_solref.
+
+
+@pytest.fixture(scope="module")
+def solref_env(device):
+  return create_test_env(device, expand_fields=("geom_solref",))
+
+
+def test_geom_solref_defaults_to_dampratio(solref_env):
+  """Only axis 1 moves unless axis 0 is requested explicitly."""
+  torch.manual_seed(61)
+  env = solref_env
+  geom_ids = env.scene["robot"].indexing.geom_ids
+
+  before = env.sim.model.geom_solref.clone()
+  dr.geom_solref(
+    env,
+    env_ids=None,
+    ranges=(0.7, 0.95),
+    operation="abs",
+    asset_cfg=SceneEntityCfg("robot", geom_names=(".*",)),
+  )
+
+  after = env.sim.model.geom_solref
+  assert torch.all((after[:, geom_ids, 1] >= 0.7) & (after[:, geom_ids, 1] <= 0.95))
+  assert torch.allclose(after[:, geom_ids, 0], before[:, geom_ids, 0])
+
+
+def test_geom_solref_both_axes_shared_across_geoms(solref_env):
+  """One (timeconst, dampratio) draw per env, identical on every selected geom."""
+  torch.manual_seed(62)
+  env = solref_env
+  geom_ids = env.scene["robot"].indexing.geom_ids
+
+  dr.geom_solref(
+    env,
+    env_ids=None,
+    ranges={0: (0.012, 0.03), 1: (0.9, 1.1)},
+    axes=[0, 1],
+    operation="abs",
+    asset_cfg=SceneEntityCfg("robot", geom_names=(".*",)),
+    shared_random=True,
+  )
+
+  timeconst = env.sim.model.geom_solref[:, geom_ids, 0]
+  dampratio = env.sim.model.geom_solref[:, geom_ids, 1]
+  assert torch.all((timeconst >= 0.012) & (timeconst <= 0.03))
+  assert torch.all((dampratio >= 0.9) & (dampratio <= 1.1))
+  assert torch.all(timeconst.std(dim=1) < 1e-9)
+  assert len(torch.unique(timeconst[:, 0])) >= 2
+
+
+def test_geom_solref_rejects_out_of_range_axis(solref_env):
+  """geom_solref has two axes; axis 2 is not one of them."""
+  env = solref_env
+
+  with pytest.raises(ValueError):
+    dr.geom_solref(
+      env,
+      env_ids=None,
+      ranges=(0.9, 1.0),
+      axes=[2],
+      asset_cfg=SceneEntityCfg("robot", geom_names=(".*",)),
+    )

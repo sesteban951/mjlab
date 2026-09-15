@@ -283,3 +283,36 @@ def geom_size(
     default_axes=[0, 1, 2],
   )
   _recompute_geom_bounds(env, env_ids, asset_cfg)
+
+
+@requires_model_fields("geom_solref")
+def geom_solref(
+  env: ManagerBasedRlEnv,
+  env_ids: torch.Tensor | None,
+  ranges: Ranges,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+  distribution: Distribution | str = "uniform",
+  operation: Operation | str = "abs",
+  axes: list[int] | None = None,
+  shared_random: bool = False,
+) -> None:
+  """Randomize contact solver reference parameters.
+
+  Axis 0 is ``timeconst`` (contact spring time constant in seconds, clamped by MuJoCo to
+  2 * timestep) and axis 1 is ``dampratio`` (below 1 is bouncier). Defaults to axis 1. A
+  contact uses the higher-``priority`` geom's parameters, or a ``solmix`` blend when equal.
+  """
+  _randomize_model_field(
+    env,
+    env_ids,
+    "geom_solref",
+    entity_type="geom",
+    ranges=ranges,
+    distribution=distribution,
+    operation=operation,
+    asset_cfg=asset_cfg,
+    axes=axes,
+    shared_random=shared_random,
+    default_axes=[1],
+    valid_axes=[0, 1],
+  )

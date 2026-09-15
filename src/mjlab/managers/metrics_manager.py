@@ -32,6 +32,8 @@ class MetricsTermCfg(ManagerTermBaseCfg):
 
   per_substep: bool = False
   reduce: Literal["mean", "last"] = "mean"
+  log_prefix: str = "Episode_Metrics"
+  """Logger key prefix; the metric lands at ``<log_prefix>/<name>``."""
 
 
 class MetricsManager(ManagerBase):
@@ -105,12 +107,11 @@ class MetricsManager(ManagerBase):
     # Avoid division by zero for envs that haven't stepped.
     safe_counts = torch.clamp(counts, min=1.0)
     for idx, key in enumerate(self._episode_sums):
+      log_key = f"{self._term_cfgs[idx].log_prefix}/{key}"
       if self._term_cfgs[idx].reduce == "last":
-        extras["Episode_Metrics/" + key] = torch.mean(self._step_values[env_ids, idx])
+        extras[log_key] = torch.mean(self._step_values[env_ids, idx])
       else:
-        extras["Episode_Metrics/" + key] = torch.mean(
-          self._episode_sums[key][env_ids] / safe_counts
-        )
+        extras[log_key] = torch.mean(self._episode_sums[key][env_ids] / safe_counts)
       self._episode_sums[key][env_ids] = 0.0
     self._step_count[env_ids] = 0
     for buf in self._substep_accum:

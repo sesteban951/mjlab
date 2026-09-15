@@ -1,3 +1,4 @@
+import math
 from typing import Any
 
 import numpy as np
@@ -18,6 +19,39 @@ from mjlab.utils.lab_api.math import (
 )
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
 from mjlab.viewer.viewer_config import ViewerConfig
+
+# The joint order the CSV's columns 7: are read in; shared with tools that write them.
+G1_JOINT_ORDER: tuple[str, ...] = (
+  "left_hip_pitch_joint",
+  "left_hip_roll_joint",
+  "left_hip_yaw_joint",
+  "left_knee_joint",
+  "left_ankle_pitch_joint",
+  "left_ankle_roll_joint",
+  "right_hip_pitch_joint",
+  "right_hip_roll_joint",
+  "right_hip_yaw_joint",
+  "right_knee_joint",
+  "right_ankle_pitch_joint",
+  "right_ankle_roll_joint",
+  "waist_yaw_joint",
+  "waist_roll_joint",
+  "waist_pitch_joint",
+  "left_shoulder_pitch_joint",
+  "left_shoulder_roll_joint",
+  "left_shoulder_yaw_joint",
+  "left_elbow_joint",
+  "left_wrist_roll_joint",
+  "left_wrist_pitch_joint",
+  "left_wrist_yaw_joint",
+  "right_shoulder_pitch_joint",
+  "right_shoulder_roll_joint",
+  "right_shoulder_yaw_joint",
+  "right_elbow_joint",
+  "right_wrist_roll_joint",
+  "right_wrist_pitch_joint",
+  "right_wrist_yaw_joint",
+)
 
 
 class MotionLoader:
@@ -58,13 +92,30 @@ class MotionLoader:
     # motion[:, 2] -= 0.05
     self.motion_base_poss_input = motion[:, :3]
     self.motion_base_rots_input = motion[:, 3:7]
+    # COLUMNS 3:7 MUST BE xyzw; a MuJoCo qpos dump is wxyz and is corrupted here silently.
     self.motion_base_rots_input = self.motion_base_rots_input[
       :, [3, 0, 1, 2]
     ]  # convert to wxyz
     self.motion_dof_poss_input = motion[:, 7:]
+    self._warn_if_quat_order_looks_wrong()
 
     self.input_frames = motion.shape[0]
     self.duration = (self.input_frames - 1) * self.input_dt
+
+  def _warn_if_quat_order_looks_wrong(self) -> None:
+    """Flag a CSV whose root quaternion was written wxyz instead of xyzw.
+
+    Such a dump reorders into a valid unit quaternion, so the only symptom is a nonsense
+    pose. Body +z tilt on frame 0 is the cheap tell, and unlike the rotation angle it
+    ignores yaw.
+    """
+    _, x, y, _ = self.motion_base_rots_input[0].tolist()
+    tilt_deg = math.degrees(math.acos(max(-1.0, min(1.0, 1.0 - 2.0 * (x * x + y * y)))))
+    if tilt_deg > 60.0:
+      print(
+        f"[WARNING]: frame 0 starts tilted {tilt_deg:.0f} deg from vertical. Columns 3:7 "
+        "must be xyzw; a MuJoCo qpos dump is wxyz and is silently corrupted here."
+      )
 
   def _interpolate_motion(self):
     """Interpolates the motion to the output fps."""
@@ -391,37 +442,7 @@ def main(
   run_sim(
     sim=sim,
     scene=scene,
-    joint_names=[
-      "left_hip_pitch_joint",
-      "left_hip_roll_joint",
-      "left_hip_yaw_joint",
-      "left_knee_joint",
-      "left_ankle_pitch_joint",
-      "left_ankle_roll_joint",
-      "right_hip_pitch_joint",
-      "right_hip_roll_joint",
-      "right_hip_yaw_joint",
-      "right_knee_joint",
-      "right_ankle_pitch_joint",
-      "right_ankle_roll_joint",
-      "waist_yaw_joint",
-      "waist_roll_joint",
-      "waist_pitch_joint",
-      "left_shoulder_pitch_joint",
-      "left_shoulder_roll_joint",
-      "left_shoulder_yaw_joint",
-      "left_elbow_joint",
-      "left_wrist_roll_joint",
-      "left_wrist_pitch_joint",
-      "left_wrist_yaw_joint",
-      "right_shoulder_pitch_joint",
-      "right_shoulder_roll_joint",
-      "right_shoulder_yaw_joint",
-      "right_elbow_joint",
-      "right_wrist_roll_joint",
-      "right_wrist_pitch_joint",
-      "right_wrist_yaw_joint",
-    ],
+    joint_names=list(G1_JOINT_ORDER),
     input_fps=input_fps,
     input_file=input_file,
     output_fps=output_fps,

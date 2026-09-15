@@ -197,10 +197,16 @@ def launch_training(task_id: str, args: TrainConfig | None = None):
 
   # Create log directory once before launching workers.
   log_root_path = (Path(args.log_root) / args.agent.experiment_name).resolve()
-  log_dir_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+  # A run name is the directory (and so the W&B run) verbatim; only unnamed runs
+  # get a timestamp. A named directory that already exists would mix two runs' logs.
   if args.agent.run_name:
-    log_dir_name += f"_{args.agent.run_name}"
-  log_dir = log_root_path / log_dir_name
+    log_dir = log_root_path / args.agent.run_name
+    if log_dir.exists():
+      raise FileExistsError(
+        f"{log_dir} already exists; pick another --agent.run-name or remove it."
+      )
+  else:
+    log_dir = log_root_path / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
 
   # Select GPUs based on CUDA_VISIBLE_DEVICES and user specification.
   selected_gpus, num_gpus = select_gpus(args.gpu_ids)

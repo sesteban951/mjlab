@@ -1758,3 +1758,82 @@ class BoxNestedRingsTerrainCfg(SubTerrainCfg):
 
     origin = np.array([terrain_center[0], terrain_center[1], platform_h])
     return TerrainOutput(origin=origin, geometries=geometries)
+
+
+@dataclass(kw_only=True)
+class BoxObstacleTerrainCfg(SubTerrainCfg):
+  """Flat patch carrying one static box, for clips solved against a fixed obstacle.
+
+  The box rests on the floor: its top face sits at ``box_size[2]``. ``box_offset`` is
+  measured from the patch's spawn origin, which is where ``env_origins`` lands, so it is
+  the same offset the clip's own solve used between the robot's world frame and the box.
+  """
+
+  box_size: tuple[float, float, float] = (1.0, 1.0, 0.4)
+  """Full extents (x, y, z) of the box, in meters."""
+  box_offset: tuple[float, float] = (0.0, 0.0)
+  """Box center in the horizontal plane, relative to the spawn origin, in meters."""
+  box_rgba: tuple[float, float, float, float] = (0.55, 0.36, 0.22, 1.0)
+
+  def function(
+    self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
+  ) -> TerrainOutput:
+    del difficulty, rng  # The obstacle is fixed; the clip was solved against this pose.
+    body = spec.body("terrain")
+    origin = (self.size[0] / 2, self.size[1] / 2, 0.0)
+    floor = make_plane(body, self.size, 0.0, center_zero=False)[0]
+    sx, sy, sz = self.box_size
+    box = body.add_geom(
+      type=mujoco.mjtGeom.mjGEOM_BOX,
+      size=(sx / 2, sy / 2, sz / 2),
+      pos=(origin[0] + self.box_offset[0], origin[1] + self.box_offset[1], sz / 2),
+    )
+    box.rgba = np.array(self.box_rgba)
+    return TerrainOutput(
+      origin=np.array(origin),
+      geometries=[
+        TerrainGeometry(geom=floor, color=(0.5, 0.5, 0.5, 1.0)),
+        TerrainGeometry(geom=box, color=self.box_rgba),
+      ],
+    )
+
+
+@dataclass(kw_only=True)
+class BoxTiltedPlaneTerrainCfg(SubTerrainCfg):
+  """Flat patch tilted by a random angle about a random horizontal axis.
+
+  The tilt pivots about the patch origin, so the spawn point stays at ``z = 0``. Models an
+  out-of-level floor, not terrain the policy is expected to perceive.
+  """
+
+  max_tilt_deg: float = 5.0
+  """Maximum tilt magnitude in degrees, scaled by difficulty."""
+  plane_thickness: float = 1.0
+  """Thickness of the ground box, in meters."""
+
+  def function(
+    self, difficulty: float, spec: mujoco.MjSpec, rng: np.random.Generator
+  ) -> TerrainOutput:
+    body = spec.body("terrain")
+    origin = np.array([self.size[0] / 2, self.size[1] / 2, 0.0])
+
+    tilt = rng.uniform(0.0, np.deg2rad(self.max_tilt_deg * difficulty))
+    azimuth = rng.uniform(0.0, 2 * np.pi)
+    # Tilt the patch normal by `tilt` towards `azimuth`, rotating about the horizontal
+    # axis perpendicular to it.
+    axis = np.array([-np.sin(azimuth), np.cos(azimuth), 0.0])
+    quat = np.concatenate([[np.cos(tilt / 2)], axis * np.sin(tilt / 2)])
+    normal = np.array(
+      [np.cos(azimuth) * np.sin(tilt), np.sin(azimuth) * np.sin(tilt), np.cos(tilt)]
+    )
+
+    geom = body.add_geom(
+      type=mujoco.mjtGeom.mjGEOM_BOX,
+      size=(self.size[0] / 2, self.size[1] / 2, self.plane_thickness / 2),
+      pos=tuple(origin - normal * self.plane_thickness / 2),
+      quat=tuple(quat),
+    )
+    return TerrainOutput(
+      origin=origin,
+      geometries=[TerrainGeometry(geom=geom, color=(0.5, 0.5, 0.5, 1.0))],
+    )

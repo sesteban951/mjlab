@@ -4,9 +4,11 @@ from typing import TYPE_CHECKING
 
 import torch
 
+from mjlab.tasks.tracking.mdp.rewards import _tvlqr
 from mjlab.utils.lab_api.math import quat_error_magnitude
 
 if TYPE_CHECKING:
+  from mjlab.envs import ManagerBasedRlEnv
   from mjlab.tasks.tracking.mdp.commands import MotionCommand
 
 
@@ -105,3 +107,36 @@ def _get_body_indices(
       f"Available bodies: {tuple(command.cfg.body_names)}."
     )
   return [name_to_index[name] for name in body_names]
+
+
+# TVLQR diagnostics: the raw quantities the CLF rewards pass through their RBF kernels,
+# measured rather than optimized. The sigmas are picked against these distributions, so
+# logging them is how you tell a badly-sized sigma from a policy that is actually failing.
+
+
+def clf_violation_rel(
+  env: ManagerBasedRlEnv, action_name: str = "joint_pos"
+) -> torch.Tensor:
+  """The CLF decrease violation as a fraction of V -- what ``clf_decrease_rbf`` scores."""
+  return _tvlqr(env, action_name).violation_rel
+
+
+def clf_value(env: ManagerBasedRlEnv, action_name: str = "joint_pos") -> torch.Tensor:
+  """``V = e^T P e`` at the latest substep, in the export's own units."""
+  return _tvlqr(env, action_name).v
+
+
+def clf_value_ratio(
+  env: ManagerBasedRlEnv, action_name: str = "joint_pos"
+) -> torch.Tensor:
+  """``V / V_ref,k`` -- what ``clf_value_kernel`` scores."""
+  term = _tvlqr(env, action_name)
+  return term.v / term.v_ref
+
+
+def qdes_distance(
+  env: ManagerBasedRlEnv, action_name: str = "joint_pos"
+) -> torch.Tensor:
+  """``||qdes_policy - qdes_ctrl||`` in radians -- what ``qdes_imitation_rbf`` scores."""
+  term = _tvlqr(env, action_name)
+  return torch.linalg.norm(term.qdes_policy - term.qdes_ctrl, dim=-1)

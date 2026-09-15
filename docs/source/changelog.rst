@@ -8,21 +8,43 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added ``dr.geom_solref``, which randomizes contact solver reference parameters
+  (axis 0 ``timeconst``, axis 1 ``dampratio``, the closest MuJoCo analogue to
+  surface compliance and restitution). Defaults to the dampratio axis only. Keep
+  ``timeconst`` at or above twice the physics timestep.
+- Added ``BoxTiltedPlaneTerrainCfg`` (and the ``tilted_plane`` preset), a flat
+  patch rotated by up to ``max_tilt_deg`` about a random horizontal axis. The tilt
+  pivots about the patch origin, so the spawn point stays at ``z = 0``. Meant as
+  ground-level randomization -- an out-of-level or unevenly compressing floor --
+  rather than terrain a policy is expected to perceive.
+- Added ``add_custom_g1_contact_dr`` and ``ContactDRCfg`` to the shared G1 custom DR
+  module: one ``(timeconst, dampratio)`` draw per environment at startup, shared
+  across every ``*_collision`` geom, since surface compliance is a property of the
+  ground rather than of each foot capsule.
+- Added the ``G1-CLF-Tracking`` task: ``G1-Robust-Tracking`` plus a ``clf_tracking``
+  reward ``(1 + V / V_ref,k)^-beta`` against a per-schedule-entry reference V, and a
+  ``clf_decrease`` whose relative violation is floored by ``0.1 * V_ref,k`` at sigma 0.3.
+  Added ``clf_value_kernel``, the ``clf_value_ratio`` metric, and ``v_ref_path`` /
+  ``v_floor_scale`` on ``TvlqrGuidedJointPositionActionCfg`` (defaults unchanged).
 - Added the ``G1-Robust-Tracking`` task: G1 motion tracking on mj-nlp's sideroll
   solve with guide-only TVLQR shaping, tuned for sim2real rather than for a clean
   CLF ablation. It keeps ``G1-Tracking-Control``'s ``clf_decrease`` and
   ``qdes_imitation`` rewards and ``G1-Tracking-Custom``'s mode-11 actuators, custom
   DR, actuator delay and limb/waist action-rate split, but keeps the stock capsule
-  sole, starts on ``G1-Standing-DiffDrive``'s standing idle pose, and has no
+  sole, centres the action offset on the clip's first frame, and has no
   environment-variable switches -- every knob is a module constant. Physics runs at
-  the solve's 0.01 s timestep, since the gain schedule may only be applied at the
-  rate it was designed for.
+  200 Hz and the 100 Hz gain schedule is strided back to the rate it was designed for.
 - Added ``scripts/mjnlp_solve_to_tvlqr``, which converts an mj-nlp LQR solve into the
   TVLQR export schema ``tracking.mdp.tvlqr`` reads, mapping
   ``{state, input, gains, cost_to_go}`` onto ``{x_bar, u_bar, K, P}`` and deriving
   the tangent names, actuator mapping and ctrl box from the solve's own MuJoCo model.
   ``alpha`` is written as a constant (0 by default), since a solve's continuous-time
   rate is not the per-step scalar the discrete CLF condition takes.
+- Added ``reward_groups`` to ``ManagerBasedRlEnvCfg``: named sums of reward terms
+  that the reward manager logs as ``Train/r_<group>`` on the ``Episode_Reward``
+  scale, and ``log_prefix`` on ``MetricsTermCfg`` to place a metric under any
+  logger key. ``motion_tape_prior`` now exposes ``feedforward_target``,
+  ``feedback_correction`` and ``closed_loop_target``.
 - Added ``BuiltinDcMotorActuator``, a native MuJoCo ``<dcmotor>`` wrapper.
   Supports voltage / position / velocity input modes with back-EMF,
   configurable motor constants, and optional integral, slew, inductance,
@@ -31,19 +53,59 @@ Added
   enabled, the noise amplitude scales with difficulty (flat at 0, full
   ``noise_range`` at 1) so the terrain progresses in a curriculum. Defaults to
   ``False``, preserving the previous difficulty-independent behavior.
-- Added ``JointPositionActionWithPrior``, a joint position action that blends
-  the policy target with a full-state control prior as
-  ``u = (1 - lam) * pi(o) + lam * u_prior(s)``, with ``lam`` in ``[0, 1]``. The prior is evaluated
-  inside the decimation loop at its own ``prior_frequency_hz``, so it can be a
-  state-feedback controller rather than a per-control-step feedforward
-  reference, and it reads the environment directly so it is not limited to the
-  actor observation group.
+- Added ``g1_locked_wrists.xml`` and ``get_g1_locked_wrists_robot_cfg``, the G1
+  with its six wrist joints held at zero by equality constraints, matching
+  mj-nlp's ``g1_29dof_locked_wrists.xml``. Same nq/nv/nu, joint order and
+  actuator order as ``g1.xml``, so a tape or gain schedule built against either
+  indexes the same. ``play_prior --lock-wrists True`` selects it.
+- Added ``play_prior --match-solve-plant``, which puts the sim on the plant the
+  tape was solved on -- timestep, integrator, friction cone, contact parameters
+  and solver budget -- reading them from the ``dynamics_config`` the exporter now
+  stamps into each tape rather than from constants in mjlab. It refuses to guess
+  when the export saved none.
+- Added ``JointPositionActionWithPrior``, a joint position action that
+  evaluates a full-state control prior alongside the policy target. The prior is
+  evaluated once per control step, at the state the policy acted on, and
+  published on ``prior_target`` for rewards to read. It reads the environment
+  directly, so it is not limited to the actor observation group. ``blend``
+  selects what actually reaches the robot: ``"nominal"`` (``u = pi(o)``, the
+  default -- the prior is a reward signal only), ``"convex"``
+  (``u = (1 - lam) * pi(o) + lam * u_prior``, with ``lam`` annealable by
+  ``action_curriculum``) or ``"residual"`` (``u = u_prior + pi(o)``).
+  ``MJLAB_PRIOR_BLEND`` picks the mode for the G1 prior tracking tasks.
+- Added ``JointPositionPriorReplayAction``, which applies the prior as the sole
+  controller at its own ``prior_frequency_hz`` inside the decimation loop, so a
+  state-feedback prior can close its loop at the physics rate. Used by
+  ``scripts/play_prior.py`` to score a control tape with no policy in the loop.
 - Added ``action_curriculum``, which anneals a scalar attribute of an action
-  term (by default the prior weight ``lam``) over training steps, linearly
-  interpolating between stages.
+  term over training steps, linearly interpolating between stages. ``attribute``
+  defaults to ``"lam"``, the prior weight of ``JointPositionActionWithPrior``.
 - Added the ``Mjlab-Tracking-Prior-Flat-Unitree-G1`` task: G1 motion tracking
-  with the reference motion's joint angles as the control prior, annealed from
-  ``lam = 5/6`` to zero over the first 50000 environment steps.
+  with the reference motion's joint angles as the control prior.
+- Added ``BoxObstacleTerrainCfg``, a flat sub-terrain carrying one static box at
+  a fixed offset from the patch spawn origin. Clips solved against an obstacle
+  need that obstacle under every robot, and terrain patches give each
+  environment its own without scaling geom count with ``num_envs``.
+- Added the ``Mjlab-Tracking-Prior-BoxRolldown-Unitree-G1`` task: the prior
+  tracking task on the box_rolldown clip, with the box the clip was solved
+  against under every environment.
+- Added an ablation switch to the G1 prior tracking configs. ``ablation`` (or
+  ``MJLAB_ABLATION``) selects ``control`` -- every prior term off -- or a single
+  term out of ``action_prior_exp``, ``clf_decrease`` and
+  ``qdes_imitation``, leaving the task rewards untouched.
+  ``MJLAB_LYAP_KAPPA`` and ``MJLAB_LYAP_V_HALF`` override the Lyapunov
+  constants, which are motion-specific and have to be re-measured per clip.
+- Added ``mjlab.scripts.measure_lyapunov``, which rolls a checkpoint out on its
+  clip and reports the ``V = e^T P e`` distribution the policy actually operates
+  at, plus the ``kappa`` putting the shaping term at a target share of the task
+  reward. ``v_half`` is a property of the policy, not of ``P``, so it cannot be
+  carried between motions.
+- Added ``scripts/tools/ablate_prior.py``, which runs one training run per
+  ablation arm with everything else held fixed.
+- Added ``scripts/tools/compare_ablation.py``, which tabulates ablation arms on
+  the metrics that keep their meaning across arms -- tracking error, episode
+  length and the termination mix. It deliberately omits ``mean_reward``: the
+  arms do not share a reward function, so their totals are not comparable.
 - Added material domain randomization functions for MuJoCo Warp RGB rendering:
   ``dr.mat_emission``, ``dr.mat_specular``, ``dr.mat_shininess``, and
   ``dr.mat_texrepeat``.
@@ -57,6 +119,59 @@ Added
 Changed
 ^^^^^^^
 
+- ``G1-Robust-Tracking`` now sets ``reward_groups`` (``Train/r_mimic_pos``,
+  ``r_mimic_vel``, ``r_clf``, ``r_regularization``) and logs three TVLQR diagnostics
+  under ``Train/``: ``clf_viol_rel``, ``clf_V`` and ``qdes_dist``. Both are log-only.
+  The diagnostics are the raw quantities the two CLF rewards pass through their RBF
+  kernels, so a term pinned at its floor can be attributed to a mis-sized sigma rather
+  than to the policy.
+- Added ``clf_violation_rel``, ``clf_value`` and ``qdes_distance`` to
+  ``tracking.mdp.metrics``, reading the TVLQR action term's own accessors.
+- ``G1-Robust-Tracking`` now reads its cost-to-go from the closed-loop Lyapunov solve
+  (``cost_to_go_kind = "lyapunov deployed S=on about=closed"``) rather than the Riccati
+  optimal one. ``state``, ``input`` and ``gains`` are bit-identical between the two solves,
+  so only ``P`` changes and the clip needs no rebuild. ``CLF_SIGMA`` and ``QDES_SIGMA`` are
+  re-measured against the new ``P`` and the fixed clip (0.3 -> 0.63, 3.3 -> 2.55), restoring
+  the 0.70 / 0.50 mean-reward targets on a zero-action rollout.
+- ``mjnlp_solve_to_tvlqr`` gained ``--cost-to-go-key``, to pick between the several
+  cost-to-go arrays a solve may ship, and ``--like-export``, which borrows ``dof_names``,
+  ``actuator_dof_index``, ``u_lb`` and ``u_ub`` from an existing export instead of the
+  MuJoCo XML -- needed when the solve's model lives on the machine that produced it.
+- ``G1-Robust-Tracking``'s action offset is now the tracked clip's own first frame, read by
+  joint name off the TVLQR export's ``dof_names``, rather than ``G1-Standing-DiffDrive``'s
+  separately-authored idle pose. Both are a stand, but the clip's frame 0 is the stand the
+  trajectory actually opens on, so a zero action now matches the reset pose exactly (measured
+  0.0000 rad) instead of sitting ~0.1 rad/joint away -- which is what the zero-initialized
+  actor output layer assumes. Under RSI the robot still starts mid-clip, where no fixed
+  offset can match.
+- ``G1-Robust-Tracking`` now randomizes contact parameters and runs on gently sloped
+  ground. Contact ``solref`` is drawn once per environment in a mild band around the
+  stock value (``timeconst`` 0.012-0.030 s, ``dampratio`` 0.9-1.1), complementing the
+  tangential-friction randomization the custom DR base already applied. The flat plane
+  becomes a generated grid of 8 m patches, 60% of them tilted by up to 3 degrees about a
+  random horizontal axis, with each environment redrawing its patch on reset. The two
+  z-only tracking terminations widen by 0.10 m to pay for the ground-height offset the
+  flat-ground clip does not know about.
+- ``TvlqrGuidedJointPositionAction`` now accepts a physics rate finer than the
+  export's: the schedule advances one entry every ``dt_export / physics_dt``
+  substeps and ``qdes_ctrl`` is held in between, as the deployed law does. The
+  loader's timestep check relaxes from equality to requiring the export rate be an
+  integer multiple of the physics rate, with ``decimation`` divisible by that
+  stride. ``G1-Robust-Tracking`` uses it to integrate at 200 Hz against its 100 Hz
+  sideroll schedule, matching the diffdrive tasks' rate while keeping the policy at
+  50 Hz; the CLF decrease condition is still evaluated at the schedule's own rate,
+  so ``alpha`` is unchanged.
+- ``train`` now names the log directory after ``--agent.run-name`` verbatim when one
+  is given, with no timestamp prefix, and refuses to reuse an existing named
+  directory. Unnamed runs keep the timestamped directory. The W&B run takes the same
+  name.
+- ``lqr_export_to_tape.py`` now converts mj-nlp's ``lqr_mpc.py`` v3 exports, whose
+  ``state``/``input`` are a replanned closed-loop rollout rather than the plan.
+  The motion and ``ref_qpos``/``ref_qvel`` come from ``feedback_reference``
+  (the point the gains linearize at), ``feedforward`` from ``input`` and
+  ``gain`` from the theta-scaled ``gains``. These exports carry no
+  ``cost_to_go``, so the tape omits ``P`` and the converter warns that the LQR
+  value/decrease rewards need an ablation arm without them.
 - Bumped ``rsl-rl-lib`` from 5.2.0 to 5.4.0.
 - Curriculum-mode terrain difficulty is now deterministic across rows
   and reaches the configured ``difficulty_range`` endpoints
@@ -75,6 +190,62 @@ Changed
 Fixed
 ^^^^^
 
+- ``G1-Robust-Tracking``'s ``motion.npz`` had its root quaternion in xyzw order where
+  mjlab reads wxyz. ``csv_to_npz`` reorders columns 3:7 assuming xyzw, so the documented
+  rebuild -- dumping the solve's MuJoCo qpos, which is wxyz -- silently produced a valid
+  but wrong quaternion, and the clip's body positions were then generated from it. The
+  file was self-consistent (forward kinematics reproduced it exactly), so nothing errored;
+  the robot was simply reset lying on its side with its feet in the air, tracking a
+  reference that reached 0.34 m below the floor. Meanwhile the TVLQR export's ``x_bar``
+  was correct, so the CLF rewards scored against the upright trajectory the tracking
+  rewards did not. The clip is rebuilt from ``x_bar`` itself, via the new
+  ``scripts/tvlqr_to_motion_csv``, and now agrees with the schedule to 3e-6 rad.
+- ``csv_to_npz`` now warns when frame 0's root frame is tilted more than 60 degrees from
+  vertical, which is the cheap tell for a wxyz dump fed to its xyzw reorder. The check
+  uses the body +z axis rather than the rotation angle, so a yawed clip does not trip it.
+- ``G1-Robust-Tracking`` episodes now end when the clip does. The base task was written
+  for a periodic gait, where running off the end of the motion and being teleported to a
+  freshly sampled frame is harmless; this clip is one-shot, so a 10 s episode against a
+  5.44 s clip put a mid-episode teleport in most rollouts with no reset boundary. A new
+  ``motion_complete`` termination (``time_out=True``, so finishing bootstraps rather than
+  zeroing) fires on the last frame, and ``episode_length_s`` is now only a ceiling.
+- ``G1-Robust-Tracking`` now tracks a padded clip: a 1 s hold of
+  ``G1-Standing-DiffDrive``'s standing idle, the clip, and a 2 s hold of its last
+  frame, built by the new
+  ``scripts/tools/pad_motion.py``. The reset pose and zero-action offset move to that
+  stand. The TVLQR schedule is offset by the start pad via ``motion_pad_start``, and
+  ``clf_decrease`` and ``qdes_imitation`` are zero in the pads, so only the tracking
+  rewards shape the holds.
+
+- Fixed ``play_prior.py`` replaying a control tape at the task's 50 Hz control
+  rate regardless of the tape's own frame rate. Decimation now follows the tape,
+  and ``lqr_export_to_tape.py`` writes on the export's own sim grid by default
+  and requires ``--allow-decimation`` to write a slower one. A 100 Hz tape held
+  for 20 ms is a different control signal, not a coarser one: on the sideroll
+  clip the held signal leaves the solved trajectory by 2.4 rad and loses the
+  robot open loop on the plant it was solved on.
+- Fixed ``play_prior.py`` clamping the replayed tape target to the entity's soft
+  joint limits. mjlab builds its position actuators ``ctrllimited=False`` so a
+  setpoint may leave the joint range, which is how a servo asks for full torque;
+  clamping to 90% of the range cut up to 1.5 rad from the sideroll tape's own
+  feedforward on 78% of its frames, and left the ankles and waist no restoring
+  torque at all. Clamping stays on by default wherever the prior is a
+  behavior-cloning target, and ``--clip-targets`` puts it back.
+- ``lqr_export_to_tape.py`` now accepts either ``gain`` or ``gains``, carries the
+  export's own ``gain_scale`` into ``alpha``, refuses an export whose
+  ``gain_reference`` differs from the tape it flies (the format has one
+  ``ref_qpos``, so it cannot mean both), and stamps the source path, sha256,
+  ``r_scale``, ``gain_max`` and ``law`` into every tape, which ``play_prior``
+  prints. Two exports under one filename in mjlab and mj-nlp had drifted to
+  different gains, and the tape gave no sign which one it held.
+- ``lqr_export_to_tape.py`` now reports joints the solve model pins with an
+  equality constraint that the replay model leaves free, because the tape's
+  commands for them are live rather than dead: ``mjEQ_JOINT`` is a soft
+  constraint, and at the default ``solref``/``solimp`` the sideroll wrists still
+  travel 0.117 rad under the lock, exactly their reference. The replay model has
+  to pin them too. ``--neutralize-locked-commands`` zeroes those gain rows and
+  holds the reference instead, which costs the clip 844 to 657 frames and is
+  therefore off by default.
 - Fixed the velocity task runner never uploading its exported ONNX policy to
   Weights & Biases. The upload was gated on ``logger_type == "wandb"``, but
   rsl-rl renames the logger type to ``"WandbLogWriter"`` at init, so the check

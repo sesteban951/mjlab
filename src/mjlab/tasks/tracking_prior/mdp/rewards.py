@@ -7,7 +7,10 @@ from typing import TYPE_CHECKING, cast
 import numpy as np
 import torch
 
-from mjlab.envs.mdp.actions import JointPositionActionWithPrior
+from mjlab.envs.mdp.actions import (
+  JointPositionActionWithPrior,
+  JointPriorAction,
+)
 from mjlab.tasks.tracking.mdp.commands import MotionCommand
 from mjlab.tasks.tracking_prior.mdp.priors import tangent_state_error
 
@@ -423,3 +426,164 @@ class lqr_lyapunov_decrease:
     if env_ids is None:
       env_ids = slice(None)
     self._has_prev[env_ids] = False
+
+
+class _LqrLyapunov:
+  """Shared tape/P loading and ``V = e^T P e`` evaluation for the LQR Lyapunov terms."""
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    entity_name: str = cfg.params.get("entity_name", "robot")
+    self._entity = env.scene[entity_name]
+    njoint = self._entity.data.joint_pos.shape[1]
+    ndx = 2 * (6 + njoint)
+
+    tape_file: str = cfg.params["tape_file"]
+    p_file: str | None = cfg.params.get("p_file")
+    tape = np.load(tape_file)
+    source = np.load(p_file) if p_file is not None else tape
+    if "P" not in source:
+      raise KeyError(
+        f"{p_file or tape_file} has no 'P' array; export the Riccati cost-to-go of the "
+        f"same LQR solve that produced 'gain'."
+      )
+
+    def _to(src, key: str) -> torch.Tensor:
+      return torch.tensor(src[key], dtype=torch.float32, device=env.device)
+
+    P = _to(source, "P")
+    if P.ndim not in (2, 3):
+      raise ValueError(f"P must be 2- or 3-dimensional, got {P.ndim} dimensions.")
+    if P.shape[-2:] != (ndx, ndx):
+      raise ValueError(
+        f"P is {tuple(P.shape)}, expected ({ndx}, {ndx}) or (frames, {ndx}, {ndx})."
+      )
+    # The Riccati solution is symmetric; enforce it so an asymmetric export cannot
+    # make the quadratic form disagree with the cost it represents.
+    self.P = 0.5 * (P + P.transpose(-1, -2))
+    self.time_varying = P.ndim == 3
+
+    qpos_ref, qvel_ref = _to(tape, "ref_qpos"), _to(tape, "ref_qvel")
+    if qpos_ref.shape[1] != 7 + njoint or qvel_ref.shape[1] != 6 + njoint:
+      raise ValueError(
+        f"Tape reference is {qpos_ref.shape[1]}/{qvel_ref.shape[1]} wide, expected "
+        f"{7 + njoint}/{6 + njoint} for a floating base with {njoint} joints."
+      )
+    if self.time_varying and self.P.shape[0] != qpos_ref.shape[0]:
+      raise ValueError(
+        f"P has {self.P.shape[0]} frames but the tape reference has "
+        f"{qpos_ref.shape[0]}; they must be on the same grid."
+      )
+    self.qpos_ref, self.qvel_ref = qpos_ref, qvel_ref
+    self.num_frames = qpos_ref.shape[0]
+    # P is symmetric PSD, so its spectral norm is its largest eigenvalue; one number
+    # serves as both the ``norm_P`` and ``lambda_max`` of the drone-side CLF scaling.
+    self.lambda_max = torch.linalg.eigvalsh(self.P)[..., -1]
+
+  def frame(self, env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
+    command = cast(MotionCommand, env.command_manager.get_term(command_name))
+    return command.time_steps.clamp(max=self.num_frames - 1)
+
+  def quadratic(self, env: ManagerBasedRlEnv, k: torch.Tensor) -> torch.Tensor:
+    error = tangent_state_error(env, self._entity, self.qpos_ref[k], self.qvel_ref[k])
+    if self.time_varying:
+      return torch.einsum("bi,bij,bj->b", error, self.P[k], error)
+    return torch.einsum("bi,ij,bj->b", error, self.P, error)
+
+  def lam(self, k: torch.Tensor) -> torch.Tensor | float:
+    return self.lambda_max[k] if self.time_varying else self.lambda_max
+
+
+class clf_decrease_rbf:
+  """Radial basis on the CLF decrease violation: ``exp(-viol / sigma^2)``, in ``(0, 1]``.
+
+  ``viol = max(V' - V + alpha * V, 0)`` is the discrete decreasing condition
+  ``V' <= (1 - alpha) V`` hinged one-sided, so beating the required rate earns nothing
+  and the policy is not pushed to over-stabilize. ``V = e^T P e`` is scored once per env
+  step against the tape's reference, the grid ``P`` was solved on.
+
+  ``normalize`` (default) measures the violation as a fraction of ``V``: the scale-free
+  form, and the one a fixed ``sigma`` can cover, since the raw violation spans as many
+  orders of magnitude as ``V`` itself. ``squared`` gives ``exp(-viol^2 / sigma^2)``.
+  The first step of an episode has nothing to have decreased from and scores 1.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    self._lqr = _LqrLyapunov(cfg, env)
+    if float(cfg.params.get("sigma", 0.0)) <= 0.0:
+      raise ValueError(f"sigma must be positive, got {cfg.params.get('sigma')}.")
+    self._eps: float = cfg.params.get("eps", 1e-6)
+    if self._eps <= 0.0:
+      raise ValueError(f"eps must be positive, got {self._eps}.")
+    self._prev_quad = torch.zeros(env.num_envs, device=env.device)
+    self._has_prev = torch.zeros(env.num_envs, dtype=torch.bool, device=env.device)
+    self._zero = torch.zeros(env.num_envs, device=env.device)
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    tape_file: str,
+    sigma: float,
+    alpha: float = 0.01,
+    command_name: str = "motion",
+    entity_name: str = "robot",
+    p_file: str | None = None,
+    squared: bool = False,
+    normalize: bool = True,
+    eps: float = 1e-6,
+  ) -> torch.Tensor:
+    del tape_file, entity_name, p_file, eps  # Resolved at init.
+    if not 0.0 < alpha <= 1.0:
+      raise ValueError(f"alpha must lie in (0, 1], got {alpha}.")
+    k = self._lqr.frame(env, command_name)
+    quad = self._lqr.quadratic(env, k)
+
+    prev = self._prev_quad
+    viol = torch.clamp(quad - prev + alpha * prev, min=0.0)
+    if normalize:
+      viol = viol / (prev + self._eps)
+    viol = torch.where(self._has_prev, viol, self._zero)
+
+    self._prev_quad = quad
+    self._has_prev.fill_(True)
+    return torch.exp(-(viol**2 if squared else viol) / sigma**2)
+
+  def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
+    if env_ids is None:
+      env_ids = slice(None)
+    self._has_prev[env_ids] = False
+
+
+class qdes_imitation_rbf:
+  """Radial basis on ``||pi(o) - u_prior||``: ``exp(-err / sigma^2)``, in ``(0, 1]``.
+
+  Both sides are joint-position targets in radians, in the action term's joint order:
+  the policy side is the processed action (after scale and offset) and the prior side
+  is what the controller asked for. Unlike :class:`action_prior_deviation_exp` the
+  error is a norm over joints, not a per-joint RMS, and enters linearly unless
+  ``squared``, so ``sigma`` is on the scale of the whole-vector disagreement.
+  """
+
+  def __init__(self, cfg: RewardTermCfg, env: ManagerBasedRlEnv):
+    action_name: str = cfg.params.get("action_name", "joint_pos")
+    term = env.action_manager.get_term(action_name)
+    if not isinstance(term, JointPriorAction):
+      raise TypeError(
+        f"Action term '{action_name}' is a {type(term).__name__}, which has no prior "
+        f"to imitate. Expected a JointPriorAction."
+      )
+    if float(cfg.params.get("sigma", 0.0)) <= 0.0:
+      raise ValueError(f"sigma must be positive, got {cfg.params.get('sigma')}.")
+    self._term = term
+
+  def __call__(
+    self,
+    env: ManagerBasedRlEnv,
+    sigma: float,
+    action_name: str = "joint_pos",
+    squared: bool = False,
+  ) -> torch.Tensor:
+    del env, action_name  # Resolved at init.
+    err = torch.linalg.norm(
+      self._term.processed_actions - self._term.prior_target, dim=-1
+    )
+    return torch.exp(-(err**2 if squared else err) / sigma**2)

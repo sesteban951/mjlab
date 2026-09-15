@@ -22,6 +22,9 @@ from mjlab.terrains.primitive_terrains import (
   BoxNestedRingsTerrainCfg as BoxNestedRingsTerrainCfg,
 )
 from mjlab.terrains.primitive_terrains import (
+  BoxObstacleTerrainCfg as BoxObstacleTerrainCfg,
+)
+from mjlab.terrains.primitive_terrains import (
   BoxOpenStairsTerrainCfg as BoxOpenStairsTerrainCfg,
 )
 from mjlab.terrains.primitive_terrains import (
@@ -41,6 +44,9 @@ from mjlab.terrains.primitive_terrains import (
 )
 from mjlab.terrains.primitive_terrains import (
   BoxTiltedGridTerrainCfg as BoxTiltedGridTerrainCfg,
+)
+from mjlab.terrains.primitive_terrains import (
+  BoxTiltedPlaneTerrainCfg as BoxTiltedPlaneTerrainCfg,
 )
 from mjlab.terrains.terrain_entity import TerrainEntity as TerrainEntity
 from mjlab.terrains.terrain_entity import TerrainEntityCfg as TerrainEntityCfg
