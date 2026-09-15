@@ -9,7 +9,6 @@ from mjlab.tasks.tracking.config.g1_control.runner import ControlTrackingOnPolic
 
 from .env_cfgs import (
   CLF_ABLATION_ARMS,
-  CLF_V_REF,
   MOTION_FILE,
   TVLQR_EXPORT,
   unitree_g1_clf_ablation_env_cfg,
@@ -38,21 +37,18 @@ else:
     rl_cfg=unitree_g1_robust_tracking_ppo_runner_cfg(),
     runner_cls=ControlTrackingOnPolicyRunner,
   )
-  if CLF_V_REF.exists():
+  register_mjlab_task(
+    task_id="G1-CLF-Tracking",
+    env_cfg=unitree_g1_clf_tracking_env_cfg(),
+    play_env_cfg=unitree_g1_clf_tracking_env_cfg(play=True),
+    rl_cfg=unitree_g1_clf_tracking_ppo_runner_cfg(),
+    runner_cls=ControlTrackingOnPolicyRunner,
+  )
+  for arm in CLF_ABLATION_ARMS:
     register_mjlab_task(
-      task_id="G1-CLF-Tracking",
-      env_cfg=unitree_g1_clf_tracking_env_cfg(),
-      play_env_cfg=unitree_g1_clf_tracking_env_cfg(play=True),
+      task_id=f"G1-CLF-Ablation-{arm}",
+      env_cfg=unitree_g1_clf_ablation_env_cfg(arm),
+      play_env_cfg=unitree_g1_clf_ablation_env_cfg(arm, play=True),
       rl_cfg=unitree_g1_clf_tracking_ppo_runner_cfg(),
       runner_cls=ControlTrackingOnPolicyRunner,
     )
-    for arm in CLF_ABLATION_ARMS:
-      register_mjlab_task(
-        task_id=f"G1-CLF-Ablation-{arm}",
-        env_cfg=unitree_g1_clf_ablation_env_cfg(arm),
-        play_env_cfg=unitree_g1_clf_ablation_env_cfg(arm, play=True),
-        rl_cfg=unitree_g1_clf_tracking_ppo_runner_cfg(),
-        runner_cls=ControlTrackingOnPolicyRunner,
-      )
-  else:
-    print(f"[WARNING]: skipping G1-CLF-Tracking -- missing {CLF_V_REF}.")

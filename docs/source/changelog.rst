@@ -22,10 +22,11 @@ Added
   across every ``*_collision`` geom, since surface compliance is a property of the
   ground rather than of each foot capsule.
 - Added the ``G1-CLF-Tracking`` task: ``G1-Robust-Tracking`` plus a ``clf_tracking``
-  reward ``(1 + V / V_ref,k)^-beta`` against a per-schedule-entry reference V, and a
-  ``clf_decrease`` whose relative violation is floored by ``0.1 * V_ref,k`` at sigma 0.3.
-  Added ``clf_value_kernel``, the ``clf_value_ratio`` metric, and ``v_ref_path`` /
-  ``v_floor_scale`` on ``TvlqrGuidedJointPositionActionCfg`` (defaults unchanged).
+  reward ``exp(-V / (lambda_max(P_k) sigma^2))`` at sigma 0.155, with ``clf_decrease``
+  retuned to sigma 0.3, and ``G1-CLF-Ablation-{Traj,CLF,Qdes,All}`` arms that keep
+  subsets of the three guidance rewards. Added ``clf_value_exp``, the
+  ``clf_value_ratio`` metric (``V / lambda_max(P_k)``) and
+  ``TvlqrGuidedJointPositionAction.lam_max``.
 - Added the ``G1-Robust-Tracking`` task: G1 motion tracking on mj-nlp's sideroll
   solve with guide-only TVLQR shaping, tuned for sim2real rather than for a clean
   CLF ablation. It keeps ``G1-Tracking-Control``'s ``clf_decrease`` and

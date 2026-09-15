@@ -118,12 +118,6 @@ class TvlqrGuidedJointPositionActionCfg(JointPositionActionCfg):
   """Put the controller IN THE LOOP (``target = qdes_ctrl + scale * action``) instead of guiding by
   reward. Off by default -- see the module docstring."""
 
-  v_ref_path: str | None = None
-  """``.npy`` of per-schedule-entry reference V, shape ``(n,)``; enables ``v_ref``."""
-
-  v_floor_scale: float = 0.0
-  """Adds ``v_floor_scale * V_ref,k`` to ``violation_rel``'s denominator; 0 keeps the plain ratio."""
-
   def build(self, env: ManagerBasedRlEnv) -> TvlqrGuidedJointPositionAction:
     return TvlqrGuidedJointPositionAction(self, env)
 
@@ -191,19 +185,10 @@ class TvlqrGuidedJointPositionAction(JointPositionAction):
     self._u_ub = t("u_ub")[rows]
     self._n_steps = int(self._u_bar.shape[0])
 
-    self._v_ref: torch.Tensor | None = None
-    if cfg.v_ref_path is not None:
-      v_ref = torch.as_tensor(np.load(cfg.v_ref_path), dtype=torch.float32, device=dev)
-      if v_ref.shape != (self._n_steps,) or not bool((v_ref > 0).all()):
-        raise ValueError(
-          f"{cfg.v_ref_path} must be positive with shape ({self._n_steps},), "
-          f"got {tuple(v_ref.shape)} with min {float(v_ref.min()):.3g}"
-        )
-      self._v_ref = v_ref
-    if cfg.v_floor_scale < 0 or (cfg.v_floor_scale > 0 and self._v_ref is None):
-      raise ValueError(
-        f"v_floor_scale={cfg.v_floor_scale} must be >= 0, and > 0 needs a v_ref_path"
-      )
+    # P is symmetric PSD, so its largest eigenvalue is its spectral norm.
+    self._lam_max = torch.linalg.eigvalsh(
+      0.5 * (self._P + self._P.transpose(-1, -2)).double()
+    )[..., -1].float()
 
     # ---- rates. The schedule is per PHYSICS step and the motion index advances per ENV step, so
     # the two are related by the decimation. A resampled artifact would desync them silently.
@@ -237,7 +222,7 @@ class TvlqrGuidedJointPositionAction(JointPositionAction):
     self._violation = torch.zeros(n_envs, device=dev)
     self._violation_rel = torch.zeros(n_envs, device=dev)
     self._have_prev = torch.zeros(n_envs, dtype=torch.bool, device=dev)
-    self._v_ref_now = torch.ones(n_envs, device=dev)
+    self._lam_max_now = torch.ones(n_envs, device=dev)
 
   ##
   # Properties read by the reward terms.
@@ -293,11 +278,9 @@ class TvlqrGuidedJointPositionAction(JointPositionAction):
     return self._violation_rel
 
   @property
-  def v_ref(self) -> torch.Tensor:
-    """(B,) the reference V at the latest substep's schedule entry."""
-    if self._v_ref is None:
-      raise ValueError("v_ref needs TvlqrGuidedJointPositionActionCfg.v_ref_path")
-    return self._v_ref_now
+  def lam_max(self) -> torch.Tensor:
+    """(B,) ``lambda_max(P_k)`` at the latest substep's schedule entry."""
+    return self._lam_max_now
 
   ##
   # ActionTerm hooks.
@@ -334,11 +317,8 @@ class TvlqrGuidedJointPositionAction(JointPositionAction):
 
     v = torch.einsum("bi,bij,bj->b", dx, self._P[k], dx)
     step_viol = torch.clamp(v - self._v_prev + self._alpha[k] * self._v_prev, min=0.0)
-    floor = 0.0
-    if self._v_ref is not None:
-      self._v_ref_now = self._v_ref[k]
-      floor = self.cfg.v_floor_scale * self._v_ref_now
-    step_rel = step_viol / (self._v_prev + floor + 1e-6)
+    self._lam_max_now = self._lam_max[k]
+    step_rel = step_viol / (self._v_prev + 1e-6)
     # the first substep after a reset has no predecessor to decrease from
     live = self._have_prev
     self._violation = torch.maximum(self._violation, torch.where(live, step_viol, 0.0))

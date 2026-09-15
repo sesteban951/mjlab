@@ -129,9 +129,9 @@ def clf_value(env: ManagerBasedRlEnv, action_name: str = "joint_pos") -> torch.T
 def clf_value_ratio(
   env: ManagerBasedRlEnv, action_name: str = "joint_pos"
 ) -> torch.Tensor:
-  """``V / V_ref,k`` -- what ``clf_value_kernel`` scores."""
+  """``V / lambda_max(P_k)`` -- what ``clf_value_exp`` scales by sigma^2."""
   term = _tvlqr(env, action_name)
-  return term.v / term.v_ref
+  return term.v / term.lam_max
 
 
 def qdes_distance(

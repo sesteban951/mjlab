@@ -176,9 +176,8 @@ def test_clf_env_adds_v_tracking_and_leaves_robust_untouched(cfg):
   clf = unitree_g1_clf_tracking_env_cfg()
   action = clf.actions["joint_pos"]
   assert isinstance(action, TvlqrGuidedJointPositionActionCfg)
-  assert action.v_ref_path is not None and action.v_floor_scale > 0
   assert clf.rewards["clf_decrease"].params["sigma"] == 0.3
   assert "clf_tracking" in clf.rewards and "clf_tracking" in clf.reward_groups["clf"]
-  assert cfg.actions["joint_pos"].v_ref_path is None
+  assert clf.rewards["clf_tracking"].params["sigma"] == 0.155
   assert "clf_tracking" not in cfg.rewards
   assert "clf_tracking" not in cfg.reward_groups["clf"]

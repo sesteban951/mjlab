@@ -27,7 +27,7 @@ from mjlab.tasks.tracking.mdp import metrics as tracking_metrics
 from mjlab.tasks.tracking.mdp import tvlqr
 from mjlab.tasks.tracking.mdp.rewards import (
   clf_decrease_rbf,
-  clf_value_kernel,
+  clf_value_exp,
   qdes_imitation_rbf,
 )
 from mjlab.tasks.tracking.mdp.terminations import motion_complete
@@ -242,11 +242,9 @@ def unitree_g1_robust_tracking_env_cfg(
   return cfg
 
 
-# Per-schedule-entry median V of G1-Robust-Tracking model_20000 under training DR.
-CLF_V_REF = _TRAJ_DIR / "sideroll_v_ref_k.npy"
+# Sigmas measured on G1-Robust-Tracking model_20000 rollouts under training DR.
 CLF_DECREASE_SIGMA = 0.3
-CLF_V_FLOOR_SCALE = 0.1
-CLF_TRACKING_BETA = 0.5
+CLF_TRACKING_SIGMA = 0.155
 CLF_TRACKING_WEIGHT = 1.0
 
 
@@ -254,23 +252,16 @@ def unitree_g1_clf_tracking_env_cfg(
   has_state_estimation: bool = False,
   play: bool = False,
 ) -> ManagerBasedRlEnvCfg:
-  """G1-Robust-Tracking plus a per-k V tracking kernel and a floored CLF decrease term."""
-  if not CLF_V_REF.exists():
-    raise FileNotFoundError(f"V reference not found at {CLF_V_REF}.")
+  """G1-Robust-Tracking plus a lambda_max-scaled V tracking term and a retuned decay sigma."""
   cfg = unitree_g1_robust_tracking_env_cfg(
     has_state_estimation=has_state_estimation, play=play
   )
 
-  action = cast(tvlqr.TvlqrGuidedJointPositionActionCfg, cfg.actions["joint_pos"])
-  cfg.actions["joint_pos"] = replace(
-    action, v_ref_path=str(CLF_V_REF), v_floor_scale=CLF_V_FLOOR_SCALE
-  )
-
   cfg.rewards["clf_decrease"].params["sigma"] = CLF_DECREASE_SIGMA
   cfg.rewards["clf_tracking"] = RewardTermCfg(
-    func=clf_value_kernel,
+    func=clf_value_exp,
     weight=CLF_TRACKING_WEIGHT,
-    params={"action_name": "joint_pos", "beta": CLF_TRACKING_BETA},
+    params={"action_name": "joint_pos", "sigma": CLF_TRACKING_SIGMA},
   )
   cfg.reward_groups["clf"] = (*cfg.reward_groups["clf"], "clf_tracking")
 

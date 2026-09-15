@@ -185,12 +185,12 @@ def clf_decrease_rbf(
   return torch.exp(-(viol**2 if squared else viol) / sigma**2) * term.in_clip
 
 
-def clf_value_kernel(
-  env: ManagerBasedRlEnv, action_name: str, beta: float
+def clf_value_exp(
+  env: ManagerBasedRlEnv, action_name: str, sigma: float
 ) -> torch.Tensor:
-  """``(1 + V / V_ref,k)^-beta`` in (0, 1]: bounded-elasticity tracking on the CLF value."""
+  """``exp(-V / (lambda_max(P_k) sigma^2))`` in (0, 1]: tracking on the CLF value."""
   term = _tvlqr(env, action_name)
-  return (1.0 + term.v / term.v_ref) ** -beta * term.in_clip
+  return torch.exp(-term.v / (term.lam_max * sigma**2)) * term.in_clip
 
 
 def qdes_imitation_rbf(
