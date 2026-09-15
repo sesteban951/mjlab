@@ -53,6 +53,30 @@ def _select(src: Source, gait_root: Path) -> list[str]:
   return keep
 
 
+def _stage_decimated(src_path, dst_path, step: int) -> None:
+  """Copy one clip taking every ``step``-th frame, so a family solved at a finer sim_dt can be
+  staged at the spec's common ``input_fps``.
+
+  Only the PER-FRAME arrays are sliced -- ``state`` and ``time`` (what the converter reads) and
+  ``input`` (one shorter). Everything else (the twist label, the node-grid defects, the solver
+  metadata) is carried through untouched, because it is not indexed by frame.
+  """
+  import numpy as np
+
+  d = np.load(src_path, allow_pickle=True)
+  n = int(np.shape(d["state"])[0])
+  out = {}
+  for k in d.files:
+    v = d[k]
+    if k in ("state", "time") and np.ndim(v) >= 1 and np.shape(v)[0] == n:
+      out[k] = v[::step]
+    elif k == "input" and np.ndim(v) >= 1 and np.shape(v)[0] == n - 1:
+      out[k] = v[::step]
+    else:
+      out[k] = v
+  np.savez(dst_path, **out)
+
+
 def _verify(spec: LibrarySpec) -> None:
   """Post-build check: uniform frame count across the tracking clips + idle present if requested."""
   files = sorted(glob.glob(str(spec.tracking_dir / "*.npz")))
@@ -91,9 +115,13 @@ def build(
   for src in spec.sources:
     selected = _select(src, gait_root)
     for f in selected:
-      shutil.copy(f, lib / os.path.basename(f))
+      if src.decimate > 1:
+        _stage_decimated(f, lib / os.path.basename(f), src.decimate)
+      else:
+        shutil.copy(f, lib / os.path.basename(f))
     filt = src.keep if src.keep else "all"
-    print(f"  {src.family:16s} keep={filt}  -> {len(selected):>3d} clips")
+    dec = f"  decimate={src.decimate}" if src.decimate > 1 else ""
+    print(f"  {src.family:16s} keep={filt}  -> {len(selected):>3d} clips{dec}")
     total += len(selected)
 
   if spec.idle:

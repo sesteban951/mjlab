@@ -40,6 +40,12 @@ DEFAULT_IDLE_CSV = _LIB_DIR / "crawl_ff_loop_180_R_001__A229_library" / "qpos_id
 # trajectories/g1/poses/stand_idle_qpos.csv (captured static stand, base z 0.776, heading +x,
 # COM 3.5 cm inside the support polygon). Re-copy it here if that file changes.
 WALK_IDLE_CSV = _LIB_DIR / "walk_diffdrive_library" / "qpos_idle.csv"
+# The upright WALK and JOG grids are both written by mj-nlp's g1_mimic_periodic library driver into
+# the same folder -- the family name (gait_library_<family>) is what separates them.
+PERIODIC_GAIT_ROOT = WALK_GAIT_ROOT
+# Standing idle for the jog library. The jog stop is the same static stand the walk library uses;
+# replace this csv if the jog task should rest in a different (e.g. ready-stance) pose.
+JOG_IDLE_CSV = _LIB_DIR / "jog_unicycle_library" / "qpos_idle.csv"
 
 # The 29 actuated G1 joints in the order the mj-nlp ``state = [qpos | qvel]`` stores them, i.e.
 # qpos columns 7:36 of every library clip and of a ``qpos_idle.csv`` row. The converter
@@ -104,11 +110,19 @@ class Source:
 
   ``keep`` maps twist axis name (``"vx"``/``"vy"``/``"wz"``) to the value a clip must have (within
   ``tol``) to be selected; an empty ``keep`` takes the whole family. Filtering reads the ``twist``
-  array stored in each npz (robust -- not filename parsing)."""
+  array stored in each npz (robust -- not filename parsing).
+
+  ``decimate`` takes every n-th frame while staging, so families solved at different sim_dt can
+  share one spec: a spec carries ONE ``input_fps`` for every clip it stages, and the converter
+  resamples all of them off that single rate. Decimating to the common (lowest) rate is exact
+  rather than lossy -- the converter lands on a 50 Hz grid by interpolation, so at an integer ratio
+  the blend weight is zero and it selects source frames; 200 -> 100 -> 50 picks the same frames as
+  200 -> 50. Prefer it over interpolating a slower family UP, which would invent frames."""
 
   family: str
   keep: dict[str, float] = field(default_factory=dict)
   tol: float = 1e-6
+  decimate: int = 1
 
 
 @dataclass(frozen=True)
@@ -181,5 +195,30 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     idle_csv=WALK_IDLE_CSV,
     input_fps=100.0,
     idle_name="walk_idle.npz",
+  ),
+  # UNICYCLE JOGGING: a genuine 2-D (vx, wz) grid, not two 1-D columns. The straight/backward
+  # families sweep BOTH axes -- that is the whole difference from the diff-drive walk spec above,
+  # whose sources pin wz = 0 -- so their filters keep only vy = 0; the pivot families pin vx = 0.
+  #
+  # THE `family` STRINGS MUST MATCH THE BUILT GRIDS. mj-nlp writes each family to
+  # <gait_root>/gait_library_<family>/; trim this tuple to the families that actually exist before
+  # building. The jog clips come off run_fwd/run_bck configs at sim_dt = 5 ms -> 200 Hz input.
+  # MIXED SOURCE RATES, reconciled by decimation. The arc grids were solved at sim_dt = 5 ms
+  # (200 Hz) and the pivots at 10 ms (100 Hz); a spec stages everything at ONE input_fps, so the
+  # arcs are decimated by 2 to the pivots' rate. Exact, not lossy: the converter's 50 Hz grid is an
+  # integer ratio of both, so 200 -> 100 -> 50 selects the same frames as 200 -> 50. All four
+  # families share the 0.860 s stride, which is what lets them stack at all.
+  "jog_unicycle": LibrarySpec(
+    name="jog_unicycle",
+    sources=(
+      Source("run_fwd", keep={"vy": 0.0}, decimate=2),  # vx>0 x wz sweep (wz=0 = straight)
+      Source("run_bck", keep={"vy": 0.0}, decimate=2),  # vx<0 x wz sweep
+      Source("walk_turn_pos_fast", keep={"vx": 0.0, "vy": 0.0}),  # in-place left pivots
+      Source("walk_turn_neg_fast", keep={"vx": 0.0, "vy": 0.0}),  # in-place right pivots
+    ),
+    gait_root=PERIODIC_GAIT_ROOT,
+    idle_csv=JOG_IDLE_CSV,
+    input_fps=100.0,  # the pivots' native rate; the arcs are decimated to it above
+    idle_name="jog_idle.npz",
   ),
 }
