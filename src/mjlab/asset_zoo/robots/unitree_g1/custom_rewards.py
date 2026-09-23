@@ -105,14 +105,14 @@ def action_rate_l2_joints(
 
 def add_custom_g1_action_rate_split(
   cfg: ManagerBasedRlEnvCfg,
-  limb_weight: float = -0.15,
-  waist_weight: float = -0.5,
+  limb_weight: float = -0.1,
+  waist_weight: float = -0.3,
   action_term_name: str = "joint_pos",
 ) -> None:
   """Replace the single ``action_rate_l2`` term with limb- and waist-scoped ones.
 
-  The two groups partition the commanded joints: ``action_rate_waist`` covers
-  the three waist DOFs, ``action_rate_limbs`` covers every other commanded joint
+  The two groups partition the commanded joints: ``action_rate_l2_waist`` covers
+  the three waist DOFs, ``action_rate_l2_limbs`` covers every other commanded joint
   (arms + legs). A heavier waist weight keeps the torso quiet while leaving the
   limbs free to move.
 
@@ -124,12 +124,12 @@ def add_custom_g1_action_rate_split(
   """
   cfg.rewards.pop("action_rate_l2", None)
   common = {"joint_expr": WAIST_JOINT_EXPR, "action_term_name": action_term_name}
-  cfg.rewards["action_rate_limbs"] = RewardTermCfg(
+  cfg.rewards["action_rate_l2_limbs"] = RewardTermCfg(
     func=action_rate_l2_joints,
     weight=limb_weight,
     params={**common, "invert": True},
   )
-  cfg.rewards["action_rate_waist"] = RewardTermCfg(
+  cfg.rewards["action_rate_l2_waist"] = RewardTermCfg(
     func=action_rate_l2_joints,
     weight=waist_weight,
     params={**common, "invert": False},

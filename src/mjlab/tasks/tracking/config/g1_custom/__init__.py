@@ -16,7 +16,7 @@ _play_env_cfg = unitree_g1_custom_flat_tracking_env_cfg(
 # Action-rate history: this task once carried a single, elevated action-rate penalty (-0.5, up from
 # the base -0.1) to combat high-frequency action chatter on hardware. That is now handled by the
 # shared limb/waist split applied in the env builder (see custom_rewards), which keeps the torso
-# heavily damped (waist -0.5) while freeing the limbs (-0.15).
+# heavily damped (waist -0.3) while freeing the limbs (-0.1, matching the base and the other envs).
 
 register_mjlab_task(
   task_id="G1-Tracking-Custom",
