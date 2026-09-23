@@ -9,14 +9,16 @@ copied out of that run unchanged — nothing here is recomputed.
 
 ```python
 import numpy as np, mujoco
+
 d = np.load("g1_mimic_periodic_v0_run_fwd_<stamp>_tvlqr.npz", allow_pickle=True)
 t, x_bar, u_bar, K, P = d["time"], d["x_bar"], d["u_bar"], d["K"], d["P"]
 
 # THE TWO PLANT OVERRIDES -- see "Reproducing the plant". Without them the law does not work.
-m = mujoco.MjModel.from_xml_path(str(d["model"]))          # relative to the repo root
-m.opt.timestep  = float(d["sim_timestep"])                 # 5 ms, not the XML's 2 ms
-m.opt.integrator = {"euler": 0, "rk4": 1, "implicit": 2,
-                    "implicitfast": 3}[str(d["sim_integrator"])]   # not the XML's euler
+m = mujoco.MjModel.from_xml_path(str(d["model"]))  # relative to the repo root
+m.opt.timestep = float(d["sim_timestep"])  # 5 ms, not the XML's 2 ms
+m.opt.integrator = {"euler": 0, "rk4": 1, "implicit": 2, "implicitfast": 3}[
+  str(d["sim_integrator"])
+]  # not the XML's euler
 ```
 
 ## Contents
@@ -43,10 +45,10 @@ u = np.clip(u_bar[k] + K[k] @ state_diff(x, x_bar[k], m), d["u_lb"], d["u_ub"])
 unit quaternion — so the 70-dim error is a *tangent* vector:
 
 ```python
-def state_diff(xa, xb, model):          # -> (70,)
-    dq = np.zeros(model.nv)
-    mujoco.mj_differentiatePos(model, dq, 1.0, xb[:model.nq], xa[:model.nq])
-    return np.concatenate([dq, xa[model.nq:] - xb[model.nq:]])
+def state_diff(xa, xb, model):  # -> (70,)
+  dq = np.zeros(model.nv)
+  mujoco.mj_differentiatePos(model, dq, 1.0, xb[: model.nq], xa[: model.nq])
+  return np.concatenate([dq, xa[model.nq :] - xb[model.nq :]])
 ```
 
 `x - x_bar` would be 71-dim, wrong in the 4 quaternion components, and silently wrong everywhere
@@ -78,9 +80,10 @@ actuator order     (rows):   left arm(5), right arm(5), then legs and waist inte
 row 0 is `left_shoulder_pitch` while column 0 is the base. To view `K` with both axes aligned:
 
 ```python
-order = np.argsort(d["actuator_dof_index"])      # actuators, sorted into dof order
-K_aligned = K[:, order, :]                       # rows now match columns
-u = np.empty(29); u[order] = u_sorted            # ... and to undo it on a command
+order = np.argsort(d["actuator_dof_index"])  # actuators, sorted into dof order
+K_aligned = K[:, order, :]  # rows now match columns
+u = np.empty(29)
+u[order] = u_sorted  # ... and to undo it on a command
 ```
 
 **2. `u` is a joint position target, not a torque.** The actuators are position servos:

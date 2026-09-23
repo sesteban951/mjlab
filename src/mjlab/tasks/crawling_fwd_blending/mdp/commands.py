@@ -56,9 +56,15 @@ class BlendingMotionCommand(FwdMotionCommand):
       self.clip_idx_prev[env_ids] = self.clip_idx[env_ids]
       self.blend_alpha[env_ids] = 1.0
 
-  def _update_command(self) -> None:
-    super()._update_command()  # advance phase + egocentric target (uses blended anchor vel below)
-    self.blend_alpha = (self.blend_alpha + 1.0 / self.blend_steps).clamp_max(1.0)
+  def _update_command(self, env_ids: torch.Tensor | None = None) -> None:
+    super()._update_command(
+      env_ids
+    )  # advance phase + egocentric target (blended anchor vel below)
+    # Scoped like the base's phase clock: a partial reset must not advance other envs' blends.
+    ids = slice(None) if env_ids is None else env_ids
+    self.blend_alpha[ids] = (self.blend_alpha[ids] + 1.0 / self.blend_steps).clamp_max(
+      1.0
+    )
 
   # --- blended gather helpers -------------------------------------------------------------------
 

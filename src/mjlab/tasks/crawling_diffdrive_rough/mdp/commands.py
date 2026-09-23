@@ -68,10 +68,12 @@ class RoughDiffDriveMotionCommand(DiffDriveMotionCommand):
       offset, -self.cfg.ground_offset_clip, self.cfg.ground_offset_clip
     )
 
-  def _update_command(self) -> None:
+  def _update_command(self, env_ids: torch.Tensor | None = None) -> None:
     # Refresh BEFORE super(): update_relative_body_poses (in super) reads the height accessors.
+    # The refresh and the z re-pin below are pure functions of current state, safe for all envs;
+    # only super() carries per-step state, and it scopes itself to env_ids.
     self._refresh_ground_offset()
-    super()._update_command()
+    super()._update_command(env_ids)
     # Re-pin the egocentric z target to the terrain-relative reference height. The base integrates z
     # by the FLAT reference vertical velocity (crawling_fwd _update_command), which is terrain-blind
     # and would let the z target drift off the surface between twist resamples.

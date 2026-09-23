@@ -25,6 +25,8 @@ from mjlab.utils.spec_config import CollisionCfg
 # the ``body_friction`` startup DR term below.
 CONTACT_RICH_COLLISION = CollisionCfg(
   geom_names_expr=(".*_collision",),
+  contype=1,
+  conaffinity=1,
   condim=3,
   priority=1,
 )

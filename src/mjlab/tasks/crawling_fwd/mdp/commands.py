@@ -331,7 +331,7 @@ class LibraryMotionCommand(MotionCommand):
     finally:
       self._rsi_on_resample = False
 
-  def _update_command(self) -> None:
+  def _update_command(self, env_ids: torch.Tensor | None = None) -> None:
     # A pin request from set_fixed_twist(): apply it to every env through the timer path.
     if self._twist_request[0]:
       _, twist = self._twist_request
@@ -342,23 +342,28 @@ class LibraryMotionCommand(MotionCommand):
     # consistent with the snapped clip (the velocity task re-zeroes its standing envs the same way).
     self._apply_idle_stop()
     # Advance the shared phase clock and LOOP (wrap mod T) -- periodic gaits, no resample/RSI at the
-    # clip boundary (twist resampling is timer-driven; see _resample_command).
-    self.time_steps += 1
-    self.time_steps %= self.motion.time_step_total
+    # clip boundary (twist resampling is timer-driven; see _resample_command). On a reset call
+    # (env_ids given) only the reset envs advance, so a partial reset does not tick other envs'
+    # clocks or path targets.
+    ids = slice(None) if env_ids is None else env_ids
+    self.time_steps[ids] += 1
+    self.time_steps[ids] %= self.motion.time_step_total
     self.update_relative_body_poses()
     # Advance the egocentric path target by the reference anchor velocity (smooth & periodic, so it
     # does NOT sawtooth like the clip's absolute position), expressed in the ROBOT'S heading frame
     # so the path continues in the direction the robot faces, not the clip's +x. Idle clips have
     # zero velocity -> the target holds, so the position cost still pins the idle pose in place.
-    self.ref_anchor_pos_w += self.anchor_lin_vel_w * self._env.step_dt
+    self.ref_anchor_pos_w[ids] += self.anchor_lin_vel_w[ids] * self._env.step_dt
     # Advance the heading target by the reference anchor angular velocity (heading frame; the yaw
     # rate is invariant to that rotation). quat_box_plus left-multiplies exp(w*dt) onto the target;
     # idle clips have w=0 so it holds. Non-sawtooth -> net yaw accumulates, unlike the clip's
     # absolute (looping) heading.
-    self.ref_anchor_quat_w = quat_box_plus(
-      self.ref_anchor_quat_w, self.anchor_ang_vel_w * self._env.step_dt
+    self.ref_anchor_quat_w[ids] = quat_box_plus(
+      self.ref_anchor_quat_w[ids], self.anchor_ang_vel_w[ids] * self._env.step_dt
     )
-    if self.cfg.sampling_mode == "adaptive":
+    # Fold failure counts into the EMA only on the per-step update so manual resets do not decay
+    # it faster (same rule as the base MotionCommand).
+    if env_ids is None and self.cfg.sampling_mode == "adaptive":
       self.bin_failed_count = (
         self.cfg.adaptive_alpha * self._current_bin_failed
         + (1 - self.cfg.adaptive_alpha) * self.bin_failed_count

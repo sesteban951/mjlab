@@ -5,6 +5,7 @@
 [![GitHub Actions](https://img.shields.io/github/actions/workflow/status/mujocolab/mjlab/ci.yml?branch=main)](https://github.com/mujocolab/mjlab/actions/workflows/ci.yml?query=branch%3Amain)
 [![Documentation](https://github.com/mujocolab/mjlab/actions/workflows/docs.yml/badge.svg)](https://mujocolab.github.io/mjlab/)
 [![License](https://img.shields.io/github/license/mujocolab/mjlab)](https://github.com/mujocolab/mjlab/blob/main/LICENSE)
+[![MuJoCo Warp](https://img.shields.io/badge/MuJoCo_Warp-3.11.0-blue)](https://github.com/google-deepmind/mujoco_warp/releases/tag/v3.11.0)
 [![Nightly Benchmarks](https://img.shields.io/badge/Nightly-Benchmarks-blue)](https://mujocolab.github.io/mjlab/nightly/)
 [![PyPI](https://img.shields.io/pypi/v/mjlab)](https://pypi.org/project/mjlab/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/mjlab?color=blue)](https://pypistats.org/packages/mjlab)
@@ -318,11 +319,16 @@ Libraries are built in two layers:
 
 ```python
 LIBRARY_SPECS = {
-  "omni":      LibrarySpec(name="omni", sources=(Source("crawl_fwd"),)),
-  "diffdrive": LibrarySpec(name="diffdrive", sources=(
-     Source("crawl_fwd", keep={"vy": 0.0, "wz": 0.0}),    # straight forward column
-     Source("crawl_bck", keep={"vy": 0.0, "wz": 0.0}),    # straight backward column
-     Source("crawl_turn_pos"), Source("crawl_turn_neg"))),  # in-place turns (whole families)
+  "omni": LibrarySpec(name="omni", sources=(Source("crawl_fwd"),)),
+  "diffdrive": LibrarySpec(
+    name="diffdrive",
+    sources=(
+      Source("crawl_fwd", keep={"vy": 0.0, "wz": 0.0}),  # straight forward column
+      Source("crawl_bck", keep={"vy": 0.0, "wz": 0.0}),  # straight backward column
+      Source("crawl_turn_pos"),
+      Source("crawl_turn_neg"),
+    ),
+  ),  # in-place turns (whole families)
 }
 ```
 
