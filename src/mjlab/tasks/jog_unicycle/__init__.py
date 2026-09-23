@@ -1,6 +1,6 @@
 """Unicycle JOGGING over an mj-nlp jog gait library.
 
-The running sibling of ``G1-Standing-DiffDrive``, and the same machinery throughout -- twist-indexed
+The running sibling of ``G1-Walking-DiffDrive``, and the same machinery throughout -- twist-indexed
 ``LibraryMotionCommand``, blended clip transitions, a reference-free actor (proprioception +
 projected gravity + commanded twist + phase clock; the critic keeps the full reference), egocentric
 path/heading rewards so looping and turning clips accumulate net motion, and an idle-pose stop.

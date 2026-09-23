@@ -181,7 +181,7 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
   # Differential-drive UPRIGHT walking: the g1_mimic_periodic walk grids (T = 1.4 s, 141 frames at
   # 100 Hz -> 70 tracking frames). The grids are already pure -- walk_fwd/bck sweep vx alone, the
   # turns sweep wz alone -- so the filters are documentation; the idle is a standing pose.
-  "standing_diffdrive": LibrarySpec(
+  "walking_diffdrive": LibrarySpec(
     name="walk_diffdrive",
     sources=(
       Source("walk_fwd", keep={"vy": 0.0, "wz": 0.0}),  # vx +0.50 .. +1.00
@@ -211,10 +211,14 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
   "jog_unicycle": LibrarySpec(
     name="jog_unicycle",
     sources=(
-      Source("run_fwd", keep={"vy": 0.0}, decimate=2),  # vx>0 x wz sweep (wz=0 = straight)
+      Source(
+        "run_fwd", keep={"vy": 0.0}, decimate=2
+      ),  # vx>0 x wz sweep (wz=0 = straight)
       Source("run_bck", keep={"vy": 0.0}, decimate=2),  # vx<0 x wz sweep
       Source("walk_turn_pos_fast", keep={"vx": 0.0, "vy": 0.0}),  # in-place left pivots
-      Source("walk_turn_neg_fast", keep={"vx": 0.0, "vy": 0.0}),  # in-place right pivots
+      Source(
+        "walk_turn_neg_fast", keep={"vx": 0.0, "vy": 0.0}
+      ),  # in-place right pivots
     ),
     gait_root=PERIODIC_GAIT_ROOT,
     idle_csv=JOG_IDLE_CSV,

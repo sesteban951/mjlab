@@ -8,7 +8,7 @@ specs, so the two never drift. Rebuild after the master grids change (e.g. the f
 to refresh the tracking libraries.
 
   uv run python -m mjlab.scripts.build_library diffdrive            # build one controller
-  uv run python -m mjlab.scripts.build_library standing_diffdrive   # the upright walk library
+  uv run python -m mjlab.scripts.build_library walking_diffdrive   # the upright walk library
   uv run python -m mjlab.scripts.build_library all                  # build every registered controller
   uv run python -m mjlab.scripts.build_library omni --no-convert True  # dry-run: selection only
 
@@ -158,7 +158,7 @@ def main(
   """Build one controller's tracking library, or ``all`` of them.
 
   Args:
-    controller: a key in ``LIBRARY_SPECS`` (e.g. ``diffdrive``, ``standing_diffdrive``) or
+    controller: a key in ``LIBRARY_SPECS`` (e.g. ``diffdrive``, ``walking_diffdrive``) or
       ``all``.
     gait_root: master-grid root, overriding every built spec's own (the crawl specs default to
       the sibling mj-nlp ``examples/g1_gait``, the walk spec to

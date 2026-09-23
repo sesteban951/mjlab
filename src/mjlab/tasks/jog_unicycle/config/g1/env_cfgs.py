@@ -1,6 +1,6 @@
 """Unitree G1 unicycle JOGGING: drive-and-turn twist command over the jog gait library.
 
-The running sibling of ``G1-Standing-DiffDrive``. Same base (``G1-Tracking-Custom``: feet-only
+The running sibling of ``G1-Walking-DiffDrive``. Same base (``G1-Tracking-Custom``: feet-only
 frictional contact, the shared custom DR, actuator delay), same blended library command, same
 reference-free actor, same egocentric path/heading rewards, same standing idle stop, same
 pelvis-yaw twist reward. ONE difference: the command set.
