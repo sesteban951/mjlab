@@ -25,16 +25,15 @@ frames at 50 Hz, plus the standing idle. Selection lives in
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.tasks.crawling_common.library import LIBRARY_SPECS, load_idle_qpos
+from mjlab.tasks.crawling_common.observations import make_actor_reference_free
 from mjlab.tasks.crawling_diffdrive.mdp.commands import DiffDriveMotionCommandCfg
 from mjlab.tasks.tracking.config.g1_custom.env_cfgs import (
   unitree_g1_custom_flat_tracking_env_cfg,
 )
 from mjlab.tasks.tracking.mdp import MotionCommandCfg
 from mjlab.tasks.walking_diffdrive import mdp
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 # One spec drives both the library build and this env: the converted tracking dir the command
 # loads, and the standing idle csv that is both the zero-twist clip and the robot's initial pose.
@@ -128,29 +127,9 @@ def unitree_g1_walking_diffdrive_env_cfg(play: bool = False) -> ManagerBasedRlEn
     rel_back_envs=(0.0 if play else REL_BACK_ENVS),
   )
 
-  # --- observations: the commanded twist (+ a phase clock), no noise, in both groups ---
-  twist_obs = ObservationTermCfg(
-    func=mdp.commanded_twist, params={"command_name": "motion"}
-  )
-  phase_obs = ObservationTermCfg(
-    func=mdp.motion_phase, params={"command_name": "motion"}
-  )
-  for group in ("actor", "critic"):
-    cfg.observations[group].terms["commanded_twist"] = replace(twist_obs)
-    cfg.observations[group].terms["motion_phase"] = replace(phase_obs)
-
-  # --- strip the target-motion reference from the ACTOR only (the critic keeps it, asymmetric) ---
-  # has_state_estimation=False already dropped motion_anchor_pos_b and base_lin_vel; the actor now
-  # sees only proprioception + phase + commanded twist. The library still drives learning via the
-  # imitation rewards.
-  for ref_term in ("command", "motion_anchor_ori_b"):
-    cfg.observations["actor"].terms.pop(ref_term, None)
-
-  # Restore a reference-free orientation signal: projected gravity = the robot's own IMU tilt
-  # (roll/pitch), replacing the orientation lost with motion_anchor_ori_b. Yaw is left to reward.
-  cfg.observations["actor"].terms["projected_gravity"] = ObservationTermCfg(
-    func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05)
-  )
+  # --- reference-free actor: commanded twist + phase in both groups, reference terms stripped
+  # from the actor, projected gravity restored in their place (see crawling_common.observations).
+  make_actor_reference_free(cfg)
 
   # --- reward: light direct twist tracking toward the (continuous) commanded twist, UPRIGHT
   # heading (pelvis yaw), see mdp/rewards.py ---

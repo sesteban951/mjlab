@@ -42,7 +42,7 @@ def unitree_g1_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       desired_kl=0.01,
       max_grad_norm=1.0,
     ),
-    experiment_name="g1_velocity",
+    experiment_name="g1_velocity_custom",
     save_interval=100,
     num_steps_per_env=24,
     max_iterations=10001,

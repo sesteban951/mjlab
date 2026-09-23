@@ -18,15 +18,14 @@ import numpy as np
 
 import mjlab
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.managers.observation_manager import ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.tasks.crawling_common.library import QPOS_JOINT_ORDER
+from mjlab.tasks.crawling_common.observations import make_actor_reference_free
 from mjlab.tasks.crawling_fwd import mdp
 from mjlab.tasks.crawling_fwd.mdp.commands import LibraryMotionCommandCfg
 from mjlab.tasks.tracking.config.g1_custom_contactrich.env_cfgs import (
   unitree_g1_custom_contactrich_flat_tracking_env_cfg,
 )
-from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 # The converted tracking-format crawl library (produced by scripts/library_to_npz.py).
 MOTION_DIR = str(
@@ -131,28 +130,9 @@ def unitree_g1_crawling_fwd_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     motion_file=MOTION_DIR,
   )
 
-  # --- observations: tell the policy the commanded twist (+ a phase clock), no noise ---
-  twist_obs = ObservationTermCfg(
-    func=mdp.commanded_twist, params={"command_name": "motion"}
-  )
-  phase_obs = ObservationTermCfg(
-    func=mdp.motion_phase, params={"command_name": "motion"}
-  )
-  for group in ("actor", "critic"):
-    cfg.observations[group].terms["commanded_twist"] = replace(twist_obs)
-    cfg.observations[group].terms["motion_phase"] = replace(phase_obs)
-
-  # --- strip the target-motion reference from the ACTOR only (keep it in the critic) ---
-  # The actor now sees only proprioception + phase + commanded twist; the critic keeps the full
-  # reference (asymmetric). The library still drives learning via the imitation reward.
-  for ref_term in ("command", "motion_anchor_ori_b"):
-    cfg.observations["actor"].terms.pop(ref_term, None)
-
-  # Restore a reference-free orientation signal: projected gravity = the robot's own IMU tilt
-  # (roll/pitch), replacing the orientation lost with motion_anchor_ori_b. Yaw is left to reward.
-  cfg.observations["actor"].terms["projected_gravity"] = ObservationTermCfg(
-    func=mdp.projected_gravity, noise=Unoise(n_min=-0.05, n_max=0.05)
-  )
+  # --- reference-free actor: commanded twist + phase in both groups, reference terms stripped
+  # from the actor, projected gravity restored in their place (see crawling_common.observations).
+  make_actor_reference_free(cfg)
 
   # --- reward: light direct twist tracking to hit the (continuous) commanded twist ---
   cfg.rewards["twist"] = RewardTermCfg(

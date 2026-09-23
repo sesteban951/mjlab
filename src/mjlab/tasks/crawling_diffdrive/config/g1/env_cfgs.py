@@ -27,7 +27,7 @@ VX_FWD_RANGE = (0.10, 0.30)
 VX_BCK_RANGE = (-0.25, -0.05)
 WZ_RANGE = (0.25, 0.55)
 # Fraction of resamples that turn in place; of the straight ones, fraction driven backward. A
-# separate rel_static (inherited, 0.05) is idle.
+# separate rel_static (inherited, 0.15) is idle.
 REL_TURN_ENVS = 0.4
 REL_BACK_ENVS = 0.5
 # Play: pin a single forward gait so the reference ghost shows one clean clip.
