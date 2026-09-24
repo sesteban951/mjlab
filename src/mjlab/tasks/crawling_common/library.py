@@ -46,6 +46,9 @@ PERIODIC_GAIT_ROOT = WALK_GAIT_ROOT
 # Standing idle for the jog library. The jog stop is the same static stand the walk library uses;
 # replace this csv if the jog task should rest in a different (e.g. ready-stance) pose.
 JOG_IDLE_CSV = _LIB_DIR / "jog_unicycle_library" / "qpos_idle.csv"
+# The unicycle WALK keeps its own copy of the same standing pose, so its staging folder is
+# self-contained like the jog's and a rebuild of one library never touches another's idle.
+WALK_UNICYCLE_IDLE_CSV = _LIB_DIR / "walk_unicycle_library" / "qpos_idle.csv"
 
 # The 29 actuated G1 joints in the order the mj-nlp ``state = [qpos | qvel]`` stores them, i.e.
 # qpos columns 7:36 of every library clip and of a ``qpos_idle.csv`` row. The converter
@@ -224,5 +227,22 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     idle_csv=JOG_IDLE_CSV,
     input_fps=100.0,  # the pivots' native rate; the arcs are decimated to it above
     idle_name="jog_idle.npz",
+  ),
+  # UNICYCLE WALKING: the jog spec's shape on the walk grids. walk_fwd / walk_bck sweep BOTH vx
+  # and wz (wz = 0 is the straight walk), so their filters keep only vy = 0; the pivot families
+  # pin vx = 0. Unlike the jog, every family was solved at sim_dt = 10 ms (100 Hz) and shares the
+  # 1.4 s stride, so nothing is decimated. Same standing idle as the diff-drive walk.
+  "walk_unicycle": LibrarySpec(
+    name="walk_unicycle",
+    sources=(
+      Source("walk_fwd", keep={"vy": 0.0}),  # vx>0 x wz sweep (wz=0 = straight)
+      Source("walk_bck", keep={"vy": 0.0}),  # vx<0 x wz sweep
+      Source("walk_turn_pos", keep={"vx": 0.0, "vy": 0.0}),  # in-place left pivots
+      Source("walk_turn_neg", keep={"vx": 0.0, "vy": 0.0}),  # in-place right pivots
+    ),
+    gait_root=PERIODIC_GAIT_ROOT,
+    idle_csv=WALK_UNICYCLE_IDLE_CSV,
+    input_fps=100.0,
+    idle_name="walk_idle.npz",
   ),
 }
