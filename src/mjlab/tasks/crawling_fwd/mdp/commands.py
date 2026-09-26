@@ -21,6 +21,7 @@ were already rotated, and the absolute ones only feed RSI and the ghost.
 
 from __future__ import annotations
 
+import copy
 import glob
 import os
 from dataclasses import dataclass
@@ -30,8 +31,13 @@ import numpy as np
 import torch
 
 from mjlab.managers import CommandTerm
-from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg
+from mjlab.tasks.tracking.mdp.commands import (
+  _DESIRED_FRAME_COLORS,
+  MotionCommand,
+  MotionCommandCfg,
+)
 from mjlab.utils.lab_api.math import (
+  matrix_from_quat,
   quat_apply,
   quat_box_plus,
   quat_inv,
@@ -47,6 +53,7 @@ if TYPE_CHECKING:
   import viser
 
   from mjlab.envs import ManagerBasedRlEnv
+  from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 
 class LibraryMotionLoader:
@@ -455,6 +462,93 @@ class LibraryMotionCommand(MotionCommand):
   @property
   def anchor_ang_vel_w(self) -> torch.Tensor:
     return self._to_heading(self._clip_anchor_ang_vel_w())
+
+  # --- debug vis: draw the reference where the rewards want the robot ----------------------------
+
+  def _egocentric_body_poses(self) -> tuple[torch.Tensor, torch.Tensor]:
+    """The served body poses re-based onto the egocentric anchor target, (N, B, 3) and (N, B, 4).
+
+    The clip's absolute poses live in the clip's own frame (origin, +x, one stride, then loop), so
+    drawing them parks the ghost at the env origin, snaps it back a stride every loop and slides it
+    during a blend. No reward looks at that: the root terms track ``ref_anchor_*`` (re-based to the
+    robot at each resample, advanced by the reference velocity) and the body terms are anchor-
+    relative. Carrying each body's anchor-relative pose over to ``ref_anchor_*`` puts the reference
+    where the rewards want the robot, so the ghost-to-robot gap IS the tracking error.
+    """
+    n_bodies = self.body_pos_w.shape[1]
+    q_clip_inv = quat_inv(self.anchor_quat_w)[:, None, :].expand(-1, n_bodies, -1)
+    rel_pos = quat_apply(q_clip_inv, self.body_pos_w - self.anchor_pos_w[:, None, :])
+    rel_quat = quat_mul(q_clip_inv, self.body_quat_w)
+    q_ref = self.ref_anchor_quat_w[:, None, :].expand(-1, n_bodies, -1)
+    pos = self.ref_anchor_pos_w[:, None, :] + quat_apply(q_ref, rel_pos)
+    return pos, quat_mul(q_ref, rel_quat)
+
+  def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
+    """Same ghost / frames as the base, drawn at the egocentric target instead of the clip's
+    absolute (looping) pose -- see ``_egocentric_body_poses``."""
+    env_indices = visualizer.get_env_indices(self.num_envs)
+    if not env_indices:
+      return
+    body_pos_w, body_quat_w = self._egocentric_body_poses()
+
+    if self.cfg.viz.mode == "ghost":
+      if self._ghost_model is None:
+        # Visual geoms only, as in the base: collision geoms get alpha 0 so the viewer drops them.
+        self._ghost_model = copy.deepcopy(self._env.sim.mj_model)
+        for gi in range(self._ghost_model.ngeom):
+          if (
+            self._ghost_model.geom_contype[gi] != 0
+            or self._ghost_model.geom_conaffinity[gi] != 0
+          ):
+            self._ghost_model.geom_rgba[gi, 3] = 0
+          else:
+            self._ghost_model.geom_rgba[gi] = self._ghost_color
+
+      indexing = self._env.scene[self.cfg.entity_name].indexing
+      free_joint_q_adr = indexing.free_joint_q_adr.cpu().numpy()
+      joint_q_adr = indexing.joint_q_adr.cpu().numpy()
+      for batch in env_indices:
+        qpos = np.zeros(self._env.sim.mj_model.nq)
+        qpos[free_joint_q_adr[0:3]] = body_pos_w[batch, 0].cpu().numpy()
+        qpos[free_joint_q_adr[3:7]] = body_quat_w[batch, 0].cpu().numpy()
+        qpos[joint_q_adr] = self.joint_pos[batch].cpu().numpy()
+        visualizer.add_ghost_mesh(qpos, model=self._ghost_model, label=f"ghost_{batch}")
+
+    elif self.cfg.viz.mode == "frames":
+      for batch in env_indices:
+        desired_pos = body_pos_w[batch].cpu().numpy()
+        desired_rotm = matrix_from_quat(body_quat_w[batch]).cpu().numpy()
+        current_pos = self.robot_body_pos_w[batch].cpu().numpy()
+        current_rotm = matrix_from_quat(self.robot_body_quat_w[batch]).cpu().numpy()
+        for i, body_name in enumerate(self.cfg.body_names):
+          visualizer.add_frame(
+            position=desired_pos[i],
+            rotation_matrix=desired_rotm[i],
+            scale=0.08,
+            label=f"desired_{body_name}_{batch}",
+            axis_colors=_DESIRED_FRAME_COLORS,
+          )
+          visualizer.add_frame(
+            position=current_pos[i],
+            rotation_matrix=current_rotm[i],
+            scale=0.12,
+            label=f"current_{body_name}_{batch}",
+          )
+        visualizer.add_frame(
+          position=self.ref_anchor_pos_w[batch].cpu().numpy(),
+          rotation_matrix=matrix_from_quat(self.ref_anchor_quat_w[batch]).cpu().numpy(),
+          scale=0.1,
+          label=f"desired_anchor_{batch}",
+          axis_colors=_DESIRED_FRAME_COLORS,
+        )
+        visualizer.add_frame(
+          position=self.robot_anchor_pos_w[batch].cpu().numpy(),
+          rotation_matrix=matrix_from_quat(self.robot_anchor_quat_w[batch])
+          .cpu()
+          .numpy(),
+          scale=0.15,
+          label=f"current_anchor_{batch}",
+        )
 
   # --- viser GUI: the base's motion scrubber + a twist pin ---------------------------------------
 
