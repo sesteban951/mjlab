@@ -11,6 +11,14 @@ tracking npz per clip to disk (no Weights & Biases).
 Each source clip carries a ``twist`` field (``[vx, vy, wz]`` in m/s, m/s, rad/s) and an optional
 ``nominal_speed``; both are copied into the tracking npz so the command can select clips by twist.
 
+Every gait clip is a closed periodic stride, and the blending command evaluates two clips at the
+SAME phase index when it transitions, so all clips of a library must agree on what phase 0 means.
+Mocap takes do not: each family's frame 0 is wherever its take started. ``align_phase`` (default
+on) therefore circularly shifts every converted clip so its foot-height profile lines up with a
+reference clip's, the straight clip nearest the middle of the forward-speed range. The shift is
+exact: the wrapped block is carried by the stride's own SE(2) displacement, and the result is
+re-based so frame 0 sits at the origin facing +x like every clip before it.
+
 If the input dir also contains ``qpos_idle.csv`` (one G1 qpos row), it is FK-replayed and written
 as a held, zero-velocity clip (``idle_out``, default ``crawl_fwd_vx_000.npz``) with twist
 ``[0, 0, 0]`` so the policy has an explicit static pose to track when commanded to stop. It is
@@ -90,6 +98,120 @@ def _apply_yaw_about_z(quat_wxyz: np.ndarray, dyaw: float) -> np.ndarray:
   """Rotate a wxyz quaternion by ``dyaw`` about the world z axis (world-frame pre-multiply)."""
   qz = np.array([np.cos(dyaw / 2.0), 0.0, 0.0, np.sin(dyaw / 2.0)], dtype=np.float64)
   return _quat_mul(qz, quat_wxyz)
+
+
+def _rot_z(dyaw: float) -> np.ndarray:
+  c, s = np.cos(dyaw), np.sin(dyaw)
+  return np.array([[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]], dtype=np.float64)
+
+
+def _yaw_transform(
+  log: dict[str, Any], rows: slice, dyaw: float, t: np.ndarray
+) -> None:
+  """In place: rotate frames ``rows`` of a tracking log by ``dyaw`` about world z and translate
+  by ``t`` (positions), rotating orientations and velocities with it."""
+  R = _rot_z(dyaw)
+  log["body_pos_w"][rows] = log["body_pos_w"][rows] @ R.T + t
+  q = log["body_quat_w"][rows]
+  qz = np.array([np.cos(dyaw / 2.0), 0.0, 0.0, np.sin(dyaw / 2.0)], dtype=np.float64)
+  w, x, y, z = q[..., 0], q[..., 1], q[..., 2], q[..., 3]
+  log["body_quat_w"][rows] = np.stack(  # qz (x) q, world-frame pre-multiply
+    [
+      qz[0] * w - qz[3] * z,
+      qz[0] * x - qz[3] * y,
+      qz[0] * y + qz[3] * x,
+      qz[0] * z + qz[3] * w,
+    ],
+    axis=-1,
+  )
+  for k in ("body_lin_vel_w", "body_ang_vel_w"):
+    log[k][rows] = log[k][rows] @ R.T
+
+
+def _circular_lag(profile: np.ndarray, ref: np.ndarray) -> int:
+  """Shift ``s`` (frames, in (-T/2, T/2]) maximising the circular correlation of two (2, T)
+  foot-height profiles: ``np.roll(profile, s, axis=1)`` lines up with ``ref``."""
+  n = ref.shape[1]
+  cc = [float(np.sum(np.roll(profile, s, axis=1) * ref)) for s in range(n)]
+  s = int(np.argmax(cc))
+  return s if s <= n // 2 else s - n
+
+
+def _feet_profile(log: dict[str, Any], feet: list[int]) -> np.ndarray:
+  z = log["body_pos_w"][:, feet, 2].astype(np.float64)
+  return (z - z.mean(axis=0)).T
+
+
+def _phase_reference(logs: dict[str, dict[str, Any]]) -> str:
+  """The straight clip nearest the middle of the forward-speed range; the first clip if the
+  library has no forward clips."""
+  fwd = {
+    n: float(lg["twist"][0]) for n, lg in logs.items() if float(lg["twist"][0]) > 1e-6
+  }
+  if not fwd:
+    return next(iter(logs))
+  mid = 0.5 * (min(fwd.values()) + max(fwd.values()))
+  return min(
+    logs,
+    key=lambda n: (
+      abs(float(logs[n]["twist"][2])) > 1e-6,  # straight first
+      abs(float(logs[n]["twist"][0]) - mid),
+      n,
+    ),
+  )
+
+
+def _align_phase(
+  logs: dict[str, dict[str, Any]],
+  strides: dict[str, tuple[np.ndarray, float]],
+  feet: list[int],
+  pelvis: int,
+) -> None:
+  """Roll every clip so its foot-height profile lines up with the reference clip's (module
+  docstring). ``strides[name] = (dxy, dpsi)``, the clip's own per-stride SE(2) displacement."""
+  ref_name = _phase_reference(logs)
+  ref = _feet_profile(logs[ref_name], feet)
+  n = ref.shape[1]
+  print(f"  phase reference: {ref_name}")
+  worst = 0
+  for name, log in logs.items():
+    s = _circular_lag(_feet_profile(log, feet), ref)
+    if s != 0:
+      dxy, dpsi = strides[name]
+      b0 = (
+        log["body_pos_w"][0, pelvis].astype(np.float64).copy()
+      )  # pelvis at OLD frame 0
+      for k in _LOG_KEYS:
+        log[k] = np.roll(log[k], s, axis=0)
+      # np.roll(., s > 0) puts old frames T-s..T-1 FIRST: they belong to the previous stride, so
+      # move them back by the stride's inverse SE(2) map g^-1: p -> Rz(-dpsi)(p - b0 - d) + b0.
+      # s < 0 puts old frames 0..|s|-1 LAST: the next stride, g: p -> Rz(dpsi)(p - b0) + b0 + d.
+      d3 = np.array([dxy[0], dxy[1], 0.0])
+      if s > 0:
+        R = _rot_z(-dpsi)
+        _yaw_transform(log, slice(0, s), -dpsi, b0 - R @ (b0 + d3))
+      else:
+        R = _rot_z(dpsi)
+        _yaw_transform(log, slice(n + s, n), dpsi, b0 + d3 - R @ b0)
+    # re-base: frame 0's pelvis at the origin (xy), facing +x -- the convention every clip had
+    p0 = log["body_pos_w"][0, pelvis].astype(np.float64)
+    yaw0 = _yaw_about_z(log["body_quat_w"][0, pelvis])
+    R = _rot_z(-yaw0)
+    _yaw_transform(log, slice(0, n), -yaw0, -(R @ np.array([p0[0], p0[1], 0.0])))
+    for k in _LOG_KEYS:
+      log[k] = log[k].astype(np.float32)
+    # seam check: the pelvis must move as smoothly across the rolled seam as anywhere else
+    step = np.linalg.norm(np.diff(log["body_pos_w"][:, pelvis, :2], axis=0), axis=-1)
+    if s != 0 and step.max() > 3.0 * max(float(np.median(step)), 1e-3) + 1e-3:
+      raise RuntimeError(
+        f"{name}: rolled seam is discontinuous (max step {step.max():.3f} m)"
+      )
+    res = _circular_lag(_feet_profile(log, feet), ref)
+    worst = max(worst, abs(res))
+    print(
+      f"  {name}: phase shift {s:+d} frames ({100.0 * s / n:+.1f}%), residual {res:+d}"
+    )
+  print(f"  phase-aligned {len(logs)} clips: worst residual lag {worst} of {n} frames")
 
 
 class LibraryMotionLoader(MotionLoader):
@@ -242,6 +364,7 @@ def main(
   output_fps: float = 50.0,
   device: str = "cuda:0",
   idle_out: str = _IDLE_OUT,
+  align_phase: bool = True,
 ):
   """Convert every ``*.npz`` in ``input_dir`` (mj-nlp ``[qpos|qvel]`` schema) to tracking npz.
 
@@ -256,6 +379,7 @@ def main(
     output_fps: Output rate; MUST equal the env control rate 1/step_dt (50 Hz).
     device: Torch/sim device.
     idle_out: Filename of the converted idle clip (written into ``output_dir``).
+    align_phase: Roll every clip so all share the reference clip's gait phase (module docstring).
   """
   if device.startswith("cuda") and not torch.cuda.is_available():
     print("[WARNING]: CUDA unavailable, falling back to CPU (slow).")
@@ -278,6 +402,8 @@ def main(
 
   print(f"converting {len(files)} clip(s): {input_fps:g} Hz -> {output_fps:g} Hz")
   num_frames = 0
+  logs: dict[str, dict[str, Any]] = {}
+  strides: dict[str, tuple[np.ndarray, float]] = {}
   for f in files:
     motion = LibraryMotionLoader(
       motion_file=f,
@@ -294,12 +420,27 @@ def main(
     if "nominal_speed" in src:
       log["nominal_speed"] = np.asarray(src["nominal_speed"], dtype=np.float32)
     num_frames = log["joint_pos"].shape[0]
-    out_path = os.path.join(output_dir, os.path.basename(f))
-    np.savez(out_path, **log)
-    print(
-      f"  {os.path.basename(f)} -> joint_pos {log['joint_pos'].shape}, "
-      f"body_pos_w {log['body_pos_w'].shape}  saved to {out_path}"
+    name = os.path.basename(f)
+    logs[name] = log
+    # the stride's own SE(2) displacement, from the source's closing frame (state[-1] = g(state[0]))
+    st = np.asarray(src["state"], dtype=np.float64)
+    strides[name] = (
+      st[-1, 0:2] - st[0, 0:2],
+      _yaw_about_z(st[-1, 3:7]) - _yaw_about_z(st[0, 3:7]),
     )
+    print(
+      f"  {name} -> joint_pos {log['joint_pos'].shape}, body_pos_w {log['body_pos_w'].shape}"
+    )
+  if align_phase:
+    body_names = list(robot.body_names)
+    feet = [
+      body_names.index(n) for n in ("left_ankle_roll_link", "right_ankle_roll_link")
+    ]
+    _align_phase(logs, strides, feet, body_names.index("pelvis"))
+  for name, log in logs.items():
+    out_path = os.path.join(output_dir, name)
+    np.savez(out_path, **log)
+  print(f"  saved {len(logs)} clips to {output_dir}")
 
   # Optional static idle pose -> a held, zero-velocity zero-twist clip. Every clip in a library must
   # share the same frame count, so the idle is held for the gait clips' output length.
@@ -310,7 +451,7 @@ def main(
     # Align the idle pose's heading (yaw about world z) to the gait clips, so a gait<->idle
     # transition is a posture change only, not a spurious ~50 deg yaw rotation. All clips of a
     # library share one heading; use the first clip as the reference.
-    ref_yaw = _yaw_about_z(np.load(files[0])["state"][0, 3:7])
+    ref_yaw = _yaw_about_z(logs[os.path.basename(files[0])]["body_quat_w"][0, 0])
     idle_yaw = _yaw_about_z(idle_qpos[3:7])
     dyaw = ref_yaw - idle_yaw
     idle_qpos[3:7] = _apply_yaw_about_z(idle_qpos[3:7], dyaw)
