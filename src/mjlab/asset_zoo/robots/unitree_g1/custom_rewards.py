@@ -105,8 +105,8 @@ def action_rate_l2_joints(
 
 def add_custom_g1_action_rate_split(
   cfg: ManagerBasedRlEnvCfg,
-  limb_weight: float = -0.1,
-  waist_weight: float = -0.3,
+  limb_weight: float = -0.15,
+  waist_weight: float = -0.35,
   action_term_name: str = "joint_pos",
 ) -> None:
   """Replace the single ``action_rate_l2`` term with limb- and waist-scoped ones.
