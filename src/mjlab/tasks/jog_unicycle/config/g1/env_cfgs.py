@@ -19,6 +19,8 @@ from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab.tasks.crawling_common.library import LIBRARY_SPECS, load_idle_qpos
 from mjlab.tasks.crawling_common.observations import make_actor_reference_free
 from mjlab.tasks.jog_unicycle import mdp
@@ -153,6 +155,24 @@ def unitree_g1_jog_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # from the actor, projected gravity restored in their place (see crawling_common.observations).
   make_actor_reference_free(cfg)
 
+  # --- feet-vs-ground contact sensor: what the foot-slip and soft-landing terms read. Same
+  # definition as the velocity tasks' (ankle_roll subtrees against the terrain, net force,
+  # air-time tracking for first-contact detection).
+  feet_ground_cfg = ContactSensorCfg(
+    name="feet_ground_contact",
+    primary=ContactMatch(
+      mode="subtree",
+      pattern=r"^(left_ankle_roll_link|right_ankle_roll_link)$",
+      entity="robot",
+    ),
+    secondary=ContactMatch(mode="body", pattern="terrain"),
+    fields=("found", "force"),
+    reduce="netforce",
+    num_slots=1,
+    track_air_time=True,
+  )
+  cfg.scene.sensors = (cfg.scene.sensors or ()) + (feet_ground_cfg,)
+
   # --- reward: light direct twist tracking toward the commanded twist, pelvis-yaw heading ---
   cfg.rewards["twist"] = RewardTermCfg(
     func=mdp.twist_tracking,
@@ -176,6 +196,29 @@ def unitree_g1_jog_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     func=mdp.egocentric_anchor_orientation_error_exp,
     weight=0.5,
     params={"command_name": "motion", "std": 0.4},
+  )
+
+  # --- stomping mitigation (hardware): penalize foot xy speed while in contact and the net
+  # contact force at each touchdown, both only while a nonzero twist is commanded. The
+  # velocity task's terms, gated on the library twist (see walking_diffdrive.mdp.rewards).
+  cfg.rewards["foot_slip"] = RewardTermCfg(
+    func=mdp.feet_slip_twist,
+    weight=-0.01,
+    params={
+      "sensor_name": feet_ground_cfg.name,
+      "command_name": "motion",
+      "command_threshold": 0.05,
+      "asset_cfg": SceneEntityCfg("robot", site_names=("left_foot", "right_foot")),
+    },
+  )
+  cfg.rewards["soft_landing"] = RewardTermCfg(
+    func=mdp.soft_landing_twist,
+    weight=-1e-5,
+    params={
+      "sensor_name": feet_ground_cfg.name,
+      "command_name": "motion",
+      "command_threshold": 0.05,
+    },
   )
 
   # Action-rate penalty comes from the shared limb/waist split applied by the custom tracking

@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, cast
 
 import torch
 
+from mjlab.entity import Entity
+from mjlab.managers.scene_entity_config import SceneEntityCfg
+from mjlab.sensor import ContactSensor
 from mjlab.tasks.crawling_fwd.mdp.commands import LibraryMotionCommand
 from mjlab.utils.lab_api.math import quat_apply
 
@@ -50,3 +53,66 @@ def twist_tracking(
   return torch.exp(
     -torch.sum(torch.square(achieved - cmd.twist_command), dim=-1) / (std**2)
   )
+
+
+_DEFAULT_ASSET_CFG = SceneEntityCfg("robot")
+
+
+def _twist_active(
+  env: ManagerBasedRlEnv, command_name: str, command_threshold: float
+) -> torch.Tensor:
+  """1 where the commanded library twist |vx|+|vy|+|wz| exceeds the threshold, else 0.
+
+  The velocity task's foot terms gate on ``command_manager.get_command(name)[:, :3]``
+  being the twist; a library command's ``.command`` is the joint reference, so the
+  gate has to read ``twist_command`` instead.
+  """
+  cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
+  t = cmd.twist_command
+  total = torch.norm(t[:, :2], dim=1) + torch.abs(t[:, 2])
+  return (total > command_threshold).float()
+
+
+def feet_slip_twist(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  command_name: str,
+  command_threshold: float = 0.05,
+  asset_cfg: SceneEntityCfg = _DEFAULT_ASSET_CFG,
+) -> torch.Tensor:
+  """velocity.mdp.feet_slip for a library command: xy foot-site speed squared while in
+  contact, summed over the feet, active only when a nonzero twist is commanded."""
+  asset: Entity = env.scene[asset_cfg.name]
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.found is not None
+  in_contact = (contact_sensor.data.found > 0).float()  # [B, N]
+  foot_vel_xy = asset.data.site_lin_vel_w[:, asset_cfg.site_ids, :2]  # [B, N, 2]
+  vel_xy_norm = torch.norm(foot_vel_xy, dim=-1)  # [B, N]
+  cost = torch.sum(torch.square(vel_xy_norm) * in_contact, dim=1)
+  cost = cost * _twist_active(env, command_name, command_threshold)
+  num_in_contact = torch.sum(in_contact)
+  env.extras["log"]["Metrics/slip_velocity_mean"] = torch.sum(
+    vel_xy_norm * in_contact
+  ) / torch.clamp(num_in_contact, min=1)
+  return cost
+
+
+def soft_landing_twist(
+  env: ManagerBasedRlEnv,
+  sensor_name: str,
+  command_name: str,
+  command_threshold: float = 0.05,
+) -> torch.Tensor:
+  """velocity.mdp.soft_landing for a library command: net contact force on each foot at
+  the step it first touches down, summed, active only when a nonzero twist is commanded."""
+  contact_sensor: ContactSensor = env.scene[sensor_name]
+  assert contact_sensor.data.force is not None
+  force_magnitude = torch.norm(contact_sensor.data.force, dim=-1)  # [B, N]
+  first_contact = contact_sensor.compute_first_contact(dt=env.step_dt)  # [B, N]
+  landing_impact = force_magnitude * first_contact.float()
+  cost = torch.sum(landing_impact, dim=1)
+  num_landings = torch.sum(first_contact.float())
+  env.extras["log"]["Metrics/landing_force_mean"] = torch.sum(
+    landing_impact
+  ) / torch.clamp(num_landings, min=1)
+  return cost * _twist_active(env, command_name, command_threshold)
