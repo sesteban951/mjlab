@@ -14,6 +14,7 @@ import tyro
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
+from mjlab.rl.recurrent import wrap_for_inference
 from mjlab.scripts._cli import maybe_print_top_level_help
 from mjlab.tasks.crawling_fwd.mdp.commands import (
   LibraryMotionCommand,
@@ -316,7 +317,10 @@ def run_play(task_id: str, cfg: PlayConfig):
     runner.load(
       str(resume_path), load_cfg={"actor": True}, strict=True, map_location=device
     )
-    policy = runner.get_inference_policy(device=device)
+    # A recurrent policy needs its hidden state zeroed when an env starts a new episode.
+    policy = wrap_for_inference(
+      runner.get_inference_policy(device=device), env.unwrapped
+    )
 
   # Build checkpoint manager for hot-swapping checkpoints in the viewer.
   ckpt_manager: CheckpointManager | None = None
@@ -330,7 +334,9 @@ def run_play(task_id: str, cfg: PlayConfig):
         strict=True,
         map_location=device,
       )
-      return _ckpt_runner.get_inference_policy(device=device)
+      return wrap_for_inference(
+        _ckpt_runner.get_inference_policy(device=device), env.unwrapped
+      )
 
     if cfg.wandb_run_path is None:
       ckpt_dir = resume_path.parent
