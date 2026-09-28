@@ -10,7 +10,16 @@
       "Bash(gh:*)",
       "WebSearch",
       "Skill(commit-push-pr)",
-      "Skill(pr-review-toolkit:review-pr)"
+      "Skill(pr-review-toolkit:review-pr)",
+      "Bash(uv run python -c ' *)",
+      "Bash(grep -nA30 \"scripts\\\\|console\\\\|entry\")",
+      "Bash(tee /tmp/claude-1000/-home-amberlab-projects-mjlab/5d7b1837-e437-47a8-9f4b-9f6f490c75b8/scratchpad/play_crawl.log)",
+      "Bash(tee /tmp/claude-1000/-home-amberlab-projects-mjlab/5d7b1837-e437-47a8-9f4b-9f6f490c75b8/scratchpad/play_crawl_fwd.log)",
+      "Bash(grep -nA3 -iE \"uv run train|train Mjlab|--logger|wandb_project|--env.scene\" README.md)",
+      "Bash(tee /tmp/claude-1000/-home-amberlab-projects-mjlab/5d7b1837-e437-47a8-9f4b-9f6f490c75b8/scratchpad/play_crawl_fwd_twist.log)",
+      "Bash(grep -vE \"^\\\\s*$\")",
+      "Bash(tee /tmp/claude-1000/-home-amberlab-projects-mjlab/5d7b1837-e437-47a8-9f4b-9f6f490c75b8/scratchpad/play_rzmf.log)",
+      "Bash(tee /tmp/claude-1000/-home-amberlab-projects-mjlab/5d7b1837-e437-47a8-9f4b-9f6f490c75b8/scratchpad/play_rzmf2.log)"
     ]
   },
   "hooks": {
