@@ -101,11 +101,9 @@ class UnicycleMotionCommand(BlendingMotionCommand):
 
     self.twist_command[env_ids] = twist
 
-    # Snap to the nearest library clip under the weighted-L2 twist metric (same as the base).
-    dist = (
-      (self.motion.lib_twists[None] - twist[:, None]) ** 2 * self.twist_metric_weights
-    ).sum(dim=-1)  # (n_envs, n_clips)
-    self.clip_idx[env_ids] = torch.argmin(dist, dim=-1)
+    # Snap through the base so the ragged-library phase remap runs: the clip must never
+    # change without time_steps being rescaled onto its length (see _snap_to_library).
+    self._snap_to_library(env_ids)
 
 
 @dataclass(kw_only=True)

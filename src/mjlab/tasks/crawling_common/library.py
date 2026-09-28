@@ -1,12 +1,13 @@
 """Declarative gait-library specs for the library-tracking controllers (single source of truth).
 
 Each library controller (env) tracks a curated subset of an mj-nlp master gait grid
-(``<gait_root>/gait_library_<family>/``), converted to mjlab tracking npz. A :class:`LibrarySpec`
-names that subset -- per source family, an axis-equality filter on the twist label ``[vx, vy, wz]``
--- plus whether to append a zero-twist idle clip, and where its grids come from: the crawl grids
-are ``examples/g1_gait`` at 200 Hz with the prone idle pose, the upright walk grids are
-``examples/g1_mimic_periodic/library`` at 100 Hz with a standing one. Because every gait of a spec
-was generated at a common period, any mix stacks in one ``LibraryMotionLoader``.
+(``<gait_root>/gait_library_<family>/``), converted to mjlab tracking npz. A
+:class:`LibrarySpec` names that subset -- per source family, an axis-equality filter on
+the twist label ``[vx, vy, wz]`` -- plus whether to append a zero-twist idle clip, and
+where its grids come from: the crawl grids are ``examples/g1_gait`` at 200 Hz with the
+prone idle pose, the upright walk grids are ``examples/g1_mimic_periodic/library`` at
+100 Hz with a standing one. A spec's clips share one period unless it is ``ragged`` (see
+``MergeSource``), which mixes strides in one loader.
 
 ``scripts/build_library.py`` reads these specs to (re)build ``<name>_tracking/``; the env configs
 read their ``MOTION_DIR`` from the SAME spec (``LIBRARY_SPECS[key].tracking_dir``), so the
@@ -15,7 +16,7 @@ selection and the env can never drift. Central registry: add a controller by add
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 import numpy as np
@@ -129,16 +130,50 @@ class Source:
 
 
 @dataclass(frozen=True)
+class MergeSource:
+  """Select clips from an ALREADY-BUILT library's ``tracking_dir`` by twist band.
+
+  The alternative to :class:`Source`, which stages and converts from the mj-nlp master
+  grids. A merge spec assembles a new library by COPYING converted clips out of existing
+  ones, so the clips are bit-identical to the libraries they came from and no
+  re-conversion (or mj-nlp checkout) is needed. Use it to carve two families into
+  disjoint twist regions and stack them.
+
+  Bands are inclusive ``(lo, hi)`` on the clip's twist label, applied per mode because
+  the modes live on different axes: ``fwd_vx``/``bck_vx`` filter the moving clips (``vx
+  != 0``, whatever their ``wz``), ``pivot_wz`` filters the in-place pivots (``vx == 0,
+  wz != 0``) on ``|wz|``. ``None`` drops that mode entirely. ``idle`` takes the source
+  library's zero-twist clip; exactly one merge source of a spec should set it."""
+
+  spec: str  # key into LIBRARY_SPECS
+  fwd_vx: tuple[float, float] | None = None
+  bck_vx: tuple[float, float] | None = None
+  pivot_wz: tuple[float, float] | None = None  # on |wz|
+  idle: bool = False
+
+
+@dataclass(frozen=True)
 class LibrarySpec:
-  """A controller's tracking library: a filtered union of master-grid sources + an optional idle clip.
+  """A controller's tracking library: master-grid ``sources`` OR ``merges`` of built
+  libraries, plus an optional idle clip.
 
   ``name`` is the on-disk stem: ``<name>_library`` (staged inputs) -> ``<name>_tracking``
   (converted output the env loads). ``gait_root``/``input_fps`` say where the master grids are
   and how they are sampled; ``idle_csv``/``idle_name`` give the stop pose and the converted idle
-  clip's filename. Every clip of one spec must share a period (the loader stacks them)."""
+  clip's filename. Clips share one period unless ``ragged``. A merge spec has no
+  ``<name>_library`` dir and ignores the staging fields (``gait_root``, ``input_fps``,
+  ``idle_csv``, ``idle_name``); ``__post_init__`` rejects setting them."""
 
   name: str
-  sources: tuple[Source, ...]
+  sources: tuple[Source, ...] = ()
+  merges: tuple[MergeSource, ...] = ()
+  """Assemble from already-built libraries instead of the master grids (see
+  :class:`MergeSource`). Mutually exclusive with ``sources``."""
+  ragged: bool = False
+  """Clips may have DIFFERENT frame counts, i.e. the families mixed here have different
+  strides. The loader pads to the longest and plays each clip against its own length, so
+  every gait keeps its native period. Leave False for a single-period library: the build
+  then fails on a mixed one."""
   idle: bool = True
   gait_root: Path = (
     DEFAULT_GAIT_ROOT  # master grids: <gait_root>/gait_library_<family>/
@@ -146,6 +181,22 @@ class LibrarySpec:
   idle_csv: Path = DEFAULT_IDLE_CSV  # one qpos row -> the zero-twist stop clip
   input_fps: float = 200.0  # sample rate of the master-grid clips (crawl 200, walk 100)
   idle_name: str = "crawl_fwd_vx_000.npz"  # converted idle clip's filename
+
+  def __post_init__(self) -> None:
+    if bool(self.sources) == bool(self.merges):
+      raise ValueError(f"spec '{self.name}' needs exactly one of sources or merges")
+    if self.merges:
+      defaults = {f.name: f.default for f in fields(self)}
+      inert = ("gait_root", "input_fps", "idle_csv", "idle_name")
+      changed = [k for k in inert if getattr(self, k) != defaults[k]]
+      if changed:
+        raise ValueError(
+          f"spec '{self.name}' is a merge; {changed} are staging fields it ignores"
+        )
+      if self.idle and sum(m.idle for m in self.merges) != 1:
+        raise ValueError(
+          f"spec '{self.name}': exactly one MergeSource must set idle=True"
+        )
 
   @property
   def library_dir(self) -> Path:
@@ -244,5 +295,48 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     idle_csv=WALK_UNICYCLE_IDLE_CSV,
     input_fps=100.0,
     idle_name="walk_idle.npz",
+  ),
+  # WALK + JOG, TWO STRIDES IN ONE LIBRARY. The walk (T = 1.4 s, 70 frames) and jog (T =
+  # 0.86 s, 43 frames) unicycle grids overlap on 121 grid nodes (+ the idle), so a
+  # nearest-twist snap cannot tell them apart. This spec carves them into DISJOINT twist
+  # regions, each family keeping the band around its own native (the gait the trajectory
+  # optimizer actually solved; the rest of a grid is continuation away from it) and
+  # giving up the extremes that reach into the other's territory:
+  #
+  #   mode      walk native   jog native   boundary    walk keeps     jog keeps
+  #   forward   vx +0.742     vx +1.359    +0.95 *     +0.50..+0.90   +1.00..+1.50
+  #   backward  vx -0.646     vx -0.817    -0.7315     -0.70..-0.50   -1.00..-0.80
+  #   pivot     wz +-1.014    wz +-1.975   +-1.4945    0.50..1.45     1.50..2.00
+  #
+  # Bands are half-open [lo, hi). Boundaries are the midpoint between the two natives,
+  # EXCEPT forward (*): the midpoint is +1.0505, which would orphan the jog grid's +1.00
+  # node (walk's forward grid stops at +0.90, so nothing else covers it) and leave a 0.2
+  # m/s hole. Snapping the cut into the gap between the grids keeps the merged vx axis
+  # continuous. The result is 455 clips + 1 idle with ZERO overlapping twist labels and
+  # no gap wider than the contributing grid's own step.
+  #
+  # Because the two families keep their native strides, this library is RAGGED: the
+  # loader pads to 70 frames and wraps each clip at its own length, so a walk clip
+  # cycles every 70 env steps and a jog clip every 43. The env steps at 50 Hz -- the
+  # clips' own fps -- so one frame per step plays both at their native speed with no
+  # resampling and no velocity rescaling.
+  "walkjog_unicycle": LibrarySpec(
+    name="walkjog_unicycle",
+    merges=(
+      MergeSource(
+        spec="walk_unicycle",
+        fwd_vx=(0.50, 0.95),
+        bck_vx=(-0.7315, -0.45),  # hi exclusive: -0.45 keeps -0.50
+        pivot_wz=(0.0, 1.4945),
+        idle=True,  # the standing idle both families share
+      ),
+      MergeSource(
+        spec="jog_unicycle",
+        fwd_vx=(0.95, 1.60),
+        bck_vx=(-1.10, -0.7315),
+        pivot_wz=(1.4945, 2.10),
+      ),
+    ),
+    ragged=True,
   ),
 }

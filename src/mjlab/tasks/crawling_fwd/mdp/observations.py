@@ -37,7 +37,11 @@ def motion_phase(env: ManagerBasedRlEnv, command_name: str) -> torch.Tensor:
   transition blend and the adaptive-sampling bins for no gain.
   """
   cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
-  phase = cmd.time_steps.float() / max(int(cmd.motion.time_step_total), 1)
+  # Normalize by the CLIP'S own length so the phase stays a true [0, 1) fraction of the
+  # stride in a ragged library, where a 43-frame jog and a 70-frame walk share the
+  # observation.
+  n = cmd.motion.n_frames[cmd.clip_idx].float()
+  phase = cmd.time_steps.float() / n
   ang = 2.0 * math.pi * phase
   obs = torch.stack([torch.sin(ang), torch.cos(ang)], dim=-1)
   return torch.where(cmd.is_idle.unsqueeze(1), torch.zeros_like(obs), obs)

@@ -1,14 +1,17 @@
 """Twist-conditioned gait-library motion command for crawling.
 
-Extends the BeyondMimic ``MotionCommand`` (per-frame reference tracking of a single clip) to a
-LIBRARY of phase-aligned periodic gaits, each labelled with a planar twist ``[vx, vy, wz]``
-(m/s, m/s, rad/s) stored in the clip's npz. All clips share the same period/frame count ``T``, so
-they stack into a leading ``(S, T, ...)`` clip axis. Each env samples a target twist (on a timer,
-velocity-style, plus a ``rel_static_envs`` fraction that commands a zero twist), snaps it to the
-nearest library clip (``clip_idx``) under a weighted-L2 metric, and gathers the reference with a
-per-env ``[clip_idx, time_steps]`` pair. All gaits share one period, so a mid-episode resample keeps
-the phase clock and just snaps ``clip_idx`` to the new twist (no teleport); the phase wraps mod ``T``
-so a clip loops to fill an episode. RSI (reference-state init) is applied only at episode reset.
+Extends the BeyondMimic ``MotionCommand`` (per-frame reference tracking of a single
+clip) to a LIBRARY of phase-aligned periodic gaits, each labelled with a planar twist
+``[vx, vy, wz]`` (m/s, m/s, rad/s) stored in the clip's npz. Clips stack into a leading
+``(S, T_max, ...)`` clip axis. A library is normally single-period (every clip ``T_max``
+frames) but may be RAGGED (opt in with ``allow_ragged``) and mix strides: shorter clips
+are padded to ``T_max`` and each one wraps at its own ``n_frames``. Each env samples a
+target twist (on a timer, velocity-style, plus a ``rel_static_envs`` fraction that
+commands a zero twist), snaps it to the nearest library clip (``clip_idx``) under a
+weighted-L2 metric, and gathers the reference with a per-env ``[clip_idx, time_steps]``
+pair. A mid-episode resample keeps the phase clock and just snaps ``clip_idx`` to the
+new twist (no teleport); if the new clip's length differs, ``time_steps`` is remapped to
+the same PHASE. RSI (reference-state init) is applied only at episode reset.
 
 Reference VELOCITIES are served in the ROBOT'S HEADING frame. Every clip walks along its own +x,
 and once the robot has turned (or was RSI'd with yaw noise) its heading differs from the clip's;
@@ -56,6 +59,23 @@ if TYPE_CHECKING:
   from mjlab.viewer.debug_visualizer import DebugVisualizer
 
 
+def _phase_remap(
+  t: torch.Tensor, n_old: torch.Tensor, n_new: torch.Tensor
+) -> torch.Tensor:
+  """Frame ``t`` of an ``n_old``-frame cycle -> the frame of an ``n_new``-frame cycle at
+  the same PHASE. Exact identity where the lengths match; otherwise the nearest frame,
+  with a phase of ~1.0 wrapping to frame 0 (a cycle has no frame ``n``). ``(N,)`` long
+  tensors; callers guarantee ``t < n_old``."""
+  remapped = torch.round(t.float() / n_old.float() * n_new.float()).long() % n_new
+  return torch.where(n_old == n_new, t, remapped)
+
+
+def _fit_frame_to_clip(t: torch.Tensor, t_max: int, n: torch.Tensor) -> torch.Tensor:
+  """A frame drawn on the padded ``[0, t_max)`` grid -> the same fraction of an
+  ``n``-frame clip, in ``[0, n)``. Identity for a full-length clip."""
+  return (t * n) // t_max
+
+
 class LibraryMotionLoader:
   """Loads all tracking-format clips in a directory, stacked along a leading clip axis.
 
@@ -65,17 +85,46 @@ class LibraryMotionLoader:
   (S, 3)``; clips are ordered by filename (deterministic)."""
 
   def __init__(
-    self, motion_dir: str, body_indexes: torch.Tensor, device: str = "cpu"
+    self,
+    motion_dir: str,
+    body_indexes: torch.Tensor,
+    device: str = "cpu",
+    allow_ragged: bool = False,
   ) -> None:
     files = sorted(glob.glob(os.path.join(motion_dir, "*.npz")))
     if not files:
       raise FileNotFoundError(f"no .npz clips found in motion_dir: {motion_dir}")
 
+    # Per-clip frame counts. A single-period library has one value and the padding below
+    # is a no-op. A RAGGED library (walk + jog in one) mixes strides: shorter clips are
+    # padded to the longest so the arrays still stack, and ``n_frames`` records each
+    # clip's real length. It is opt-in (``allow_ragged``) so a stray wrong-length clip
+    # in a single-period library fails loudly here instead of quietly changing that
+    # clip's period.
+    counts = [int(np.load(f)["joint_pos"].shape[0]) for f in files]
+    if min(counts) < 1:
+      raise ValueError(f"empty clip: {files[counts.index(min(counts))]}")
+    if len(set(counts)) > 1 and not allow_ragged:
+      example = {
+        n: os.path.basename(files[counts.index(n)]) for n in sorted(set(counts))
+      }
+      raise ValueError(
+        f"clips in {motion_dir} have differing frame counts {sorted(set(counts))} "
+        f"(e.g. {example}); set allow_ragged=True on the command cfg to mix strides"
+      )
+    t_max = max(counts)
+
     def stack(key: str) -> torch.Tensor:
-      arrs = [np.asarray(np.load(f)[key], dtype=np.float32) for f in files]
-      counts = {a.shape[0] for a in arrs}
-      if len(counts) != 1:
-        raise ValueError(f"clips have differing frame counts for '{key}': {counts}")
+      arrs = []
+      for f, n in zip(files, counts, strict=True):
+        a = np.asarray(np.load(f)[key], dtype=np.float32)
+        if a.shape[0] != n:
+          raise ValueError(
+            f"{os.path.basename(f)}: '{key}' has {a.shape[0]} frames, joint_pos has {n}"
+          )
+        if n < t_max:  # pad by holding the last frame; never read (see n_frames)
+          a = np.concatenate([a, np.repeat(a[-1:], t_max - n, axis=0)], axis=0)
+        arrs.append(a)
       return torch.tensor(np.stack(arrs, axis=0), dtype=torch.float32, device=device)
 
     self.joint_pos = stack("joint_pos")  # (S, T, nj)
@@ -98,13 +147,23 @@ class LibraryMotionLoader:
       np.stack(twists, axis=0), dtype=torch.float32, device=device
     )  # (S, 3) = [vx, vy, wz]
     self.num_clips = len(files)
-    self.time_step_total = int(self.joint_pos.shape[1])  # T
+    self.time_step_total = int(self.joint_pos.shape[1])  # T_max (padded width)
+    self.n_frames = torch.tensor(
+      counts, dtype=torch.long, device=device
+    )  # (S,) each clip's own period in frames
+    self.ragged = len(set(counts)) > 1
+    hist = {n: counts.count(n) for n in sorted(set(counts))}
+    print(f"[INFO] LibraryMotionLoader: {self.num_clips} clips, frames -> count {hist}")
 
 
 class LibraryMotionCommand(MotionCommand):
   """Per-frame reference tracking over a twist-indexed gait library (see module docstring)."""
 
   cfg: LibraryMotionCommandCfg
+  # Narrow the loader type: the base builds a single-clip MotionLoader, this class
+  # replaces it with the stacked library loader, and every accessor below reads
+  # library-only attributes.
+  motion: LibraryMotionLoader
 
   def __init__(self, cfg: LibraryMotionCommandCfg, env: ManagerBasedRlEnv):
     # Skip MotionCommand.__init__ (it builds a single-clip MotionLoader from cfg.motion_file);
@@ -121,7 +180,10 @@ class LibraryMotionCommand(MotionCommand):
     )
 
     self.motion = LibraryMotionLoader(
-      cfg.motion_dir, self.body_indexes, device=self.device
+      cfg.motion_dir,
+      self.body_indexes,
+      device=self.device,
+      allow_ragged=cfg.allow_ragged,
     )
 
     self.twist_metric_weights = torch.tensor(
@@ -245,7 +307,66 @@ class LibraryMotionCommand(MotionCommand):
     dist = (
       (self.motion.lib_twists[None] - twist[:, None]) ** 2 * self.twist_metric_weights
     ).sum(dim=-1)  # (n_envs, n_clips)
+    old = self.clip_idx[env_ids]
     self.clip_idx[env_ids] = torch.argmin(dist, dim=-1)
+    if self.motion.ragged:
+      # Swapping between clips of different length must preserve PHASE, not the frame
+      # number: a walk env at frame 60 of 70 is 86% through its stride, and the matching
+      # jog frame is 37 of 43, not 60 (which does not exist). Remap so a mid-episode
+      # twist change lands at the same point in the new gait's cycle, which is what
+      # keeps the transition from teleporting.
+      n_old = self.motion.n_frames[old]
+      t = self.time_steps[env_ids]
+      assert bool((t < n_old).all()), "time_steps ran past its clip before the swap"
+      self.time_steps[env_ids] = _phase_remap(
+        t, n_old, self.motion.n_frames[self.clip_idx[env_ids]]
+      )
+
+  # --- start-frame sampling on a ragged library ---------------------------------------
+  # The base draws the RSI start frame on ``[0, time_step_total)``, which is the PADDED
+  # width ``T_max``; on a shorter clip that lands in padding (a held last frame), the
+  # robot would be teleported there and the clock would then wrap somewhere else. Fit
+  # every draw onto the selected clip's own length, keeping the base's bin statistics on
+  # a common PHASE scale.
+
+  def _uniform_sampling(self, env_ids: torch.Tensor) -> None:
+    super()._uniform_sampling(env_ids)
+    self._fit_start_frames(env_ids)
+
+  def _adaptive_sampling(self, env_ids: torch.Tensor) -> None:
+    # The base attributes the ending episode's failure bin as ``t / time_step_total``;
+    # lift the clip-scale frame onto the padded scale first so a bin means the same
+    # phase for every stride. These envs are being reset, so the lifted value is
+    # overwritten by the draw.
+    n = self.motion.n_frames[self.clip_idx[env_ids]]
+    self.time_steps[env_ids] = (
+      self.time_steps[env_ids] * self.motion.time_step_total
+    ) // n
+    super()._adaptive_sampling(env_ids)
+    self._fit_start_frames(env_ids)
+
+  def _fit_start_frames(self, env_ids: torch.Tensor) -> None:
+    n = self.motion.n_frames[self.clip_idx[env_ids]]
+    self.time_steps[env_ids] = _fit_frame_to_clip(
+      self.time_steps[env_ids], self.motion.time_step_total, n
+    )
+
+  def reset_to_frame(self, env_ids: torch.Tensor, frame: int) -> None:
+    # The viewer scrubber runs over the padded ``[0, T_max)``: read its frame as a
+    # phase.
+    n = self.motion.n_frames[self.clip_idx[env_ids]]
+    self.time_steps[env_ids] = _fit_frame_to_clip(
+      torch.full_like(n, int(frame)), self.motion.time_step_total, n
+    )
+    self._write_reference_state_to_sim(
+      env_ids,
+      self.body_pos_w[env_ids, 0],
+      self.body_quat_w[env_ids, 0],
+      self.body_lin_vel_w[env_ids, 0],
+      self.body_ang_vel_w[env_ids, 0],
+      self.joint_pos[env_ids],
+      self.joint_vel[env_ids],
+    )
 
   def _apply_idle_stop(self) -> None:
     """Force an exactly-zero twist wherever the reference snapped to the idle clip.
@@ -294,17 +415,22 @@ class LibraryMotionCommand(MotionCommand):
     return self._fixed_twist
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
-    # Always re-roll the twist -> clip selection. Pick clip_idx BEFORE any RSI so the base reads
-    # body_pos_w[env_ids, 0] from the newly selected clip.
-    self._resample_twist(env_ids)
-    if self._fixed_twist is not None:  # a pin overrides whatever the sampler drew
+    # Re-roll the twist -> clip selection. Pick clip_idx BEFORE any RSI so the base
+    # reads body_pos_w[env_ids, 0] from the newly selected clip. A pin REPLACES the
+    # sampler rather than overriding its draw, so the clip is snapped once: a sampler
+    # draw of the other stride family would otherwise remap the phase twice and jitter
+    # it by a frame.
+    if self._fixed_twist is None:
+      self._resample_twist(env_ids)
+    else:
       self.twist_command[env_ids] = torch.tensor(
         self._fixed_twist, dtype=torch.float32, device=self.device
       )
       self._snap_to_library(env_ids)
     # RSI (start-frame sampling + teleport to the reference pose) only at episode reset. On the
     # mid-episode timer resample we keep the phase clock and the robot's state, so it physically
-    # transitions to the new twist's gait (all gaits share one period, so clip_idx just swaps).
+    # transitions to the new twist's gait (a length change remaps the phase, see
+    # _snap_to_library).
     if self._rsi_on_resample:
       # The base writes the clip's root velocity into the sim as part of the teleport. That must
       # be the clip's own world-frame velocity: the robot's PRE-teleport heading is stale here, so
@@ -330,6 +456,14 @@ class LibraryMotionCommand(MotionCommand):
     # near-idle commands onto the idle clip's exact zero.
     self._apply_idle_stop()
 
+    # Every writer of time_steps above (phase remap, start-frame fit) keeps it inside
+    # its clip, so padding is never read. Fail loudly here rather than ever serve a held
+    # frame.
+    n = self.motion.n_frames[self.clip_idx[env_ids]]
+    assert bool((self.time_steps[env_ids] < n).all()), (
+      "time_steps outside its clip after resample"
+    )
+
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     # Episode reset: resample the twist AND RSI the robot into the selected clip's start pose.
     self._rsi_on_resample = True
@@ -348,13 +482,17 @@ class LibraryMotionCommand(MotionCommand):
     # Every step, not only at resample: keeps a live teleop twist and any subclass sampler
     # consistent with the snapped clip (the velocity task re-zeroes its standing envs the same way).
     self._apply_idle_stop()
-    # Advance the shared phase clock and LOOP (wrap mod T) -- periodic gaits, no resample/RSI at the
-    # clip boundary (twist resampling is timer-driven; see _resample_command). On a reset call
-    # (env_ids given) only the reset envs advance, so a partial reset does not tick other envs'
-    # clocks or path targets.
+    # Advance the phase clock and LOOP each clip at its own length -- periodic gaits, no
+    # resample/RSI at the clip boundary (twist resampling is timer-driven; see
+    # _resample_command). On a reset call (env_ids given) only the reset envs advance,
+    # so a partial reset does not tick other envs' clocks or path targets.
     ids = slice(None) if env_ids is None else env_ids
     self.time_steps[ids] += 1
-    self.time_steps[ids] %= self.motion.time_step_total
+    # Wrap at the CLIP'S OWN length, not a library-wide T. Identical to `%
+    # time_step_total` when every clip is the same length; in a ragged library it is
+    # what lets a 70-frame walk and a 43-frame jog each cycle at their native period off
+    # one frame-per-step clock.
+    self.time_steps[ids] %= self.motion.n_frames[self.clip_idx[ids]]
     self.update_relative_body_poses()
     # Advance the egocentric path target by the reference anchor velocity (smooth & periodic, so it
     # does NOT sawtooth like the clip's absolute position), expressed in the ROBOT'S heading frame
@@ -622,8 +760,13 @@ class LibraryMotionCommandCfg(MotionCommandCfg):
   twist_command_range: tuple[
     tuple[float, float], tuple[float, float], tuple[float, float]
   ] = ((0.08, 0.40), (0.0, 0.0), (0.0, 0.0))
-  # Relative weights for the [vx, vy, wz] nearest-clip metric (units differ: m/s vs rad/s), so a
-  # dense twist grid snaps sensibly across components.
+  allow_ragged: bool = False
+  """Let the library mix clips of DIFFERENT frame counts (strides). Off by default so a
+  stray wrong-length clip fails at load instead of silently changing one gait's period.
+  Set it from ``LibrarySpec.ragged`` for a merged two-stride library (see
+  ``walkjog_unicycle``)."""
+  # Relative weights for the [vx, vy, wz] nearest-clip metric (units differ: m/s vs
+  # rad/s), so a dense twist grid snaps sensibly across components.
   twist_metric_weights: tuple[float, float, float] = (1.0, 1.0, 1.0)
   # Fraction of resamples assigned a zero twist -> the static idle clip (mirrors the velocity task's
   # rel_standing_envs). 0 disables the static pose; > 0 requires a zero-twist clip in motion_dir.
