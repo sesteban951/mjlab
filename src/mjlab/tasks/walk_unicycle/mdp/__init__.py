@@ -27,3 +27,6 @@ from mjlab.tasks.walking_diffdrive.mdp.rewards import (  # noqa: F401
   soft_landing_twist,
   twist_tracking,
 )
+
+# Swing-foot geometry penalties (toe clearance, toe-down pitch), sensor-free: this task's own.
+from .rewards import swing_foot_pitch, toe_clearance  # noqa: F401
