@@ -21,16 +21,24 @@ from mjlab.tasks.walk_unicycle.config.g1.env_cfgs import (
   unitree_g1_walk_unicycle_env_cfg,
 )
 
-TOE_MIN_HEIGHT = 0.03  # [m] toe-tip margin over the plane during swing; the floor ate ~2 cm
-MAX_TOE_DOWN = 0.35  # [rad] ~20 deg of toe-down foot pitch allowed in swing (clips: ~64 deg)
-SWING_HEIGHT = 0.05  # [m] reference ankle height above which the foot counts as swinging
+TOE_MIN_HEIGHT = (
+  0.03  # [m] toe-tip margin over the plane during swing; the floor ate ~2 cm
+)
+MAX_TOE_DOWN = (
+  0.35  # [rad] ~20 deg of toe-down foot pitch allowed in swing (clips: ~64 deg)
+)
+SWING_HEIGHT = (
+  0.05  # [m] reference ankle height above which the foot counts as swinging
+)
 # Both costs are O(1) per step at the worst case (toe on the floor / foot vertical), the same
 # order as the tracking terms, so they matter without dominating.
 TOE_CLEARANCE_WEIGHT = -1.0
 SWING_FOOT_PITCH_WEIGHT = -1.0
 
 
-def unitree_g1_walk_unicycle_swingfoot_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+def unitree_g1_walk_unicycle_swingfoot_env_cfg(
+  play: bool = False,
+) -> ManagerBasedRlEnvCfg:
   """``G1-Walk-Unicycle`` with toe-clearance and swing-foot-pitch penalties."""
   cfg = unitree_g1_walk_unicycle_env_cfg(play=play)
   cfg.rewards["toe_clearance"] = RewardTermCfg(

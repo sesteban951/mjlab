@@ -41,7 +41,9 @@ def _feet(env: ManagerBasedRlEnv, command_name: str, swing_height: float):
   k = [cmd.cfg.body_names.index(n) for n in _FEET]  # index within the tracked subset
   robot_idx = [int(cmd.body_indexes[i]) for i in k]
   origin_z = env.scene.env_origins[:, 2:3]
-  ref_ankle_z = cmd.body_pos_w[:, k, 2] - origin_z  # reference ankle height above the plane
+  ref_ankle_z = (
+    cmd.body_pos_w[:, k, 2] - origin_z
+  )  # reference ankle height above the plane
   in_swing = ref_ankle_z > swing_height
   return cmd, robot_idx, in_swing, origin_z
 
