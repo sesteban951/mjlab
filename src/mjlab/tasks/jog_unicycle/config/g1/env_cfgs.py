@@ -225,7 +225,7 @@ def unitree_g1_jog_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   # is already applied by the custom tracking builder; only its weights are overridden here, so every
   # env built on this one (G1-WalkJog-Unicycle) inherits them and the shared defaults (-0.15 / -0.35)
   # stay untouched.
-  cfg.rewards["action_rate_l2_limbs"].weight = -0.2
-  cfg.rewards["action_rate_l2_waist"].weight = -0.4
+  cfg.rewards["action_rate_l2_limbs"].weight = -0.1
+  cfg.rewards["action_rate_l2_waist"].weight = -0.3
 
   return cfg
