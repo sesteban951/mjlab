@@ -15,6 +15,8 @@ Added
   kernels for Blackwell GPUs.
 - Added ``SimulationCfg.graph_conditional`` to toggle MuJoCo Warp's CUDA graph
   conditional nodes, which require CUDA 12.4 or newer.
+- Added ``SimulationCfg.warn_solver_overflow`` to silence MuJoCo Warp's per-step
+  "iterations limit reached" warning on tasks that deliberately cap the solver.
 - ``RslRlBaseRunnerCfg.logger`` accepts the import path of an
   ``rsl_rl.utils.LogWriter`` subclass, e.g. ``"my_pkg.writers:MyLogWriter"``.
 - Added ``RewardManager.term_rewards`` and ``RewardManager.get_term()`` for the

@@ -51,6 +51,11 @@ def unitree_g1_custom_flat_tracking_env_cfg(
     has_state_estimation=has_state_estimation, play=play
   )
 
+  # The stock tracking task caps the solver at 10/20 iterations for throughput;
+  # MuJoCo Warp 3.16 prints a line every step a world hits that cap. Same physics
+  # as before, so silence it.
+  cfg.sim.warn_solver_overflow = False
+
   # Use unitree_rl_mjlab's HOME initial pose instead of mjlab's knees-bent pose.
   cfg.scene.entities["robot"].init_state = UNITREE_HOME_KEYFRAME
 

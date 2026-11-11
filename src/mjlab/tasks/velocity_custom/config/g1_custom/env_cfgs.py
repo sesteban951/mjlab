@@ -35,6 +35,9 @@ def unitree_g1_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.sim.mujoco.ccd_iterations = 500
   cfg.sim.contact_sensor_maxmatch = 500
   cfg.sim.nconmax = 48
+  # Solver is capped at 10/20 iterations for throughput; MuJoCo Warp 3.16 would
+  # otherwise print a line every step a world hits that cap.
+  cfg.sim.warn_solver_overflow = False
 
   cfg.scene.entities = {"robot": get_g1_robot_cfg()}
 

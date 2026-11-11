@@ -178,6 +178,12 @@ class SimulationCfg:
   If None, use the MuJoCo Warp default."""
   ls_parallel: bool | None = None
   """Deprecated and ignored. Parallel linesearch was removed in MuJoCo Warp 3.10."""
+  warn_solver_overflow: bool = True
+  """Print a warning when a world exhausts ``iterations`` or ``ls_iterations``.
+
+  MuJoCo Warp 3.16+ reports this on every step it happens. Set False to silence it
+  on tasks that deliberately cap the solver for throughput; buffer-overflow
+  warnings (contacts, constraints) stay on."""
   mujoco: MujocoCfg = field(default_factory=MujocoCfg)
   nan_guard: NanGuardCfg = field(default_factory=NanGuardCfg)
 
@@ -201,6 +207,9 @@ class SimulationCfg:
         wp_opt.broadphase_filter |= _BROADPHASE_FILTER_MAP[name]
     if self.graph_conditional is not None:
       wp_opt.graph_conditional = self.graph_conditional
+    if not self.warn_solver_overflow:
+      solver_bits = mjwarp.OverflowType.ITERATIONS | mjwarp.OverflowType.LS_ITERATIONS
+      wp_opt.warn_overflow = int(wp_opt.warn_overflow) & ~int(solver_bits)
 
 
 class Simulation:

@@ -105,6 +105,24 @@ def test_default_broadphase_keeps_put_model_heuristic(robot_xml, device):
   assert sim.wp_model.opt.broadphase_filter == heuristic_opt.broadphase_filter
 
 
+def test_warn_solver_overflow_clears_only_solver_bits(robot_xml, device):
+  """Disabling the solver warning keeps the buffer-overflow warnings on."""
+  model = mujoco.MjModel.from_xml_string(robot_xml)
+  solver_bits = int(mjwarp.OverflowType.ITERATIONS | mjwarp.OverflowType.LS_ITERATIONS)
+
+  on = Simulation(num_envs=1, cfg=SimulationCfg(), model=model, device=device)
+  assert int(on.wp_model.opt.warn_overflow) & solver_bits == solver_bits
+
+  off = Simulation(
+    num_envs=1,
+    cfg=SimulationCfg(warn_solver_overflow=False),
+    model=model,
+    device=device,
+  )
+  assert int(off.wp_model.opt.warn_overflow) & solver_bits == 0
+  assert int(off.wp_model.opt.warn_overflow) & int(mjwarp.OverflowType.NEFC)
+
+
 def test_ls_parallel_is_deprecated():
   """Setting the removed ls_parallel option warns instead of erroring."""
   with pytest.warns(DeprecationWarning, match="ls_parallel"):
