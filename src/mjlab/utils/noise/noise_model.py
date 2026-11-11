@@ -62,9 +62,14 @@ class NoiseModelWithAdditiveBias(NoiseModel):
   @override
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
     """Reset bias values for specified environments."""
+    if self._sample_bias_per_component and not self._bias_initialized:
+      return  # The first call samples every env once the data shape is known.
     indices = slice(None) if env_ids is None else env_ids
-    # Sample new bias values.
-    self._bias[indices] = self._bias_noise_cfg.apply(self._bias[indices])
+    # Sample new bias values from zero so the previous episode's bias does not
+    # carry over.
+    self._bias[indices] = self._bias_noise_cfg.apply(
+      torch.zeros_like(self._bias[indices])
+    )
 
   def _initialize_bias_shape(self, data_shape: torch.Size) -> None:
     """Initialize bias tensor shape based on data and configuration."""

@@ -9,6 +9,7 @@ from conftest import get_test_device
 
 from mjlab.entity import EntityCfg
 from mjlab.envs.mdp import dr
+from mjlab.envs.mdp.dr.body import _eigh_3x3_jacobi
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.scene import Scene, SceneCfg
 from mjlab.sim.sim import Simulation, SimulationCfg
@@ -69,9 +70,12 @@ class Env:
 
 
 def create_test_env(
-  device, num_envs=NUM_ENVS, expand_fields=("geom_friction", "dof_damping")
+  device,
+  num_envs=NUM_ENVS,
+  expand_fields=("geom_friction", "dof_damping"),
+  xml=ROBOT_XML,
 ):
-  entity_cfg = EntityCfg(spec_fn=lambda: mujoco.MjSpec.from_string(ROBOT_XML))
+  entity_cfg = EntityCfg(spec_fn=lambda: mujoco.MjSpec.from_string(xml))
   scene_cfg = SceneCfg(num_envs=num_envs, entities={"robot": entity_cfg})
   scene = Scene(scene_cfg, device)
   model = scene.compile()
@@ -214,9 +218,10 @@ def test_log_uniform_distribution(device):
 
 
 def test_gaussian_distribution(device):
-  """Gaussian: mean/std interpretation, values cluster around mean."""
+  """Gaussian: mean/std interpretation, every env gets an independent draw."""
   torch.manual_seed(42)
-  env = create_test_env(device, num_envs=128)
+  num_envs = 128
+  env = create_test_env(device, num_envs=num_envs)
 
   mean, std = 0.5, 0.05
   dr.geom_friction(
@@ -230,7 +235,52 @@ def test_gaussian_distribution(device):
   )
 
   vals = env.sim.model.geom_friction[:, env.scene["robot"].indexing.geom_ids[0], 0]
+  # Exact float32 collisions between independent draws are possible, so require most
+  # values to differ, not all.
+  assert len(torch.unique(vals)) > num_envs // 2
   assert abs(vals.mean().item() - mean) < 0.05
+  # Rejects a differently-shaped distribution (uniform here has std ~0.014) while
+  # clearing the worst deviation over 50k seeds on CPU and CUDA (0.017).
+  assert abs(vals.std().item() - std) < 0.025
+
+
+def test_gaussian_two_dim_field_and_env_subset(device):
+  """Gaussian on a 2D field: only the selected envs change, and they differ."""
+  torch.manual_seed(42)
+  env = create_test_env(device, num_envs=32)
+  dof_adr = env.scene["robot"].indexing.joint_v_adr
+
+  before = env.sim.model.dof_damping[:, dof_adr].clone()
+  dr.joint_damping(
+    env,
+    env_ids=torch.arange(0, 32, 2, device=device),
+    ranges=(5.0, 0.5),
+    operation="abs",
+    distribution="gaussian",
+    asset_cfg=SceneEntityCfg("robot", joint_names=(".*",)),
+  )
+  after = env.sim.model.dof_damping[:, dof_adr]
+
+  assert torch.equal(after[1::2], before[1::2])
+  assert len(torch.unique(after[::2])) > after[::2].numel() // 2
+
+
+def test_gaussian_quat_field(device):
+  """Gaussian on a quat field: the 0-dim angle bounds still sample per env."""
+  torch.manual_seed(42)
+  num_envs = 32
+  env = create_test_env(device, num_envs=num_envs, expand_fields=("body_quat",))
+
+  dr.body_quat(
+    env,
+    env_ids=None,
+    roll_range=(0.0, 0.2),
+    distribution="gaussian",
+    asset_cfg=SceneEntityCfg("robot", body_names=("base",)),
+  )
+
+  quats = env.sim.model.body_quat[:, env.scene["robot"].indexing.body_ids[0]]
+  assert len(torch.unique(quats, dim=0)) > num_envs // 2
 
 
 # Axes.
@@ -611,12 +661,13 @@ def test_body_quat_only_specified_axes(quat_env):
 # pseudo_inertia tests.
 
 
-def _make_inertia_env(device, num_envs=NUM_ENVS):
+def _make_inertia_env(device, num_envs=NUM_ENVS, xml=ROBOT_XML):
   """Create an env with all inertia-related fields expanded."""
   return create_test_env(
     device,
     num_envs=num_envs,
     expand_fields=("body_mass", "body_ipos", "body_inertia", "body_iquat"),
+    xml=xml,
   )
 
 
@@ -955,6 +1006,48 @@ def test_pseudo_inertia_partial_env_ids(device):
   assert not torch.allclose(mass_after[0], mass_before[0], atol=1e-6)
   # Env 1 unchanged.
   assert torch.allclose(mass_after[1], mass_before[1], atol=1e-6)
+
+
+def test_pseudo_inertia_skips_massless_body(device):
+  """A massless body keeps its defaults instead of becoming NaN."""
+  xml = """
+  <mujoco>
+    <worldbody>
+      <body name="base">
+        <freejoint/>
+        <geom type="box" size="0.1 0.1 0.1" mass="1.0"/>
+        <body name="imu" pos="0 0 0.1"><site name="imu_site"/></body>
+      </body>
+    </worldbody>
+  </mujoco>
+  """
+  env = _make_inertia_env(device, xml=xml)
+  body_cfg = SceneEntityCfg("robot", body_names=(".*",))
+  body_cfg.resolve(env.scene)
+  base_id, imu_id = env.scene["robot"].indexing.body_ids.tolist()
+
+  dr.pseudo_inertia(env, None, alpha_range=(0.2, 0.2), asset_cfg=body_cfg)
+
+  mass = env.sim.model.body_mass
+  expected = torch.full_like(mass[:, base_id], math.exp(0.4))
+  assert torch.allclose(mass[:, base_id], expected)
+  for field in ("body_mass", "body_ipos", "body_inertia", "body_iquat"):
+    values = getattr(env.sim.model, field)[:, imu_id]
+    default = env.sim.get_default_field(field)[imu_id]
+    assert torch.equal(values, default.expand_as(values)), field
+
+
+def test_pseudo_inertia_rejects_log_uniform(inertia_env):
+  with pytest.raises(ValueError, match="log_uniform"):
+    dr.pseudo_inertia(inertia_env, None, distribution="log_uniform")
+
+
+def test_eigh_3x3_jacobi_equal_diagonal():
+  """Equal diagonal entries with nonzero coupling still need a rotation."""
+  A = torch.tensor([[2.0, 1.0, 0.0], [1.0, 2.0, 0.0], [0.0, 0.0, 3.0]])
+  eigvals, V = _eigh_3x3_jacobi(A)
+  torch.testing.assert_close(eigvals, torch.tensor([1.0, 3.0, 3.0]))
+  torch.testing.assert_close(V @ torch.diag(eigvals) @ V.T, A)
 
 
 # Camera / Light DR tests.
@@ -1425,6 +1518,40 @@ def test_geom_size_raises_on_unsupported_type(device):
 
   with pytest.raises(ValueError, match="unsupported types"):
     dr.geom_size(env, env_ids=None, ranges=(1.0, 2.0), asset_cfg=plane_cfg)
+
+
+def test_geom_size_string_ranges_recompute_only_matched_geoms(device):
+  """With string-keyed ranges, bounds are recomputed only for the matched geoms,
+  so an unmatched non-primitive geom in the same entity doesn't raise."""
+  PLANE_XML = """
+<mujoco>
+  <worldbody>
+    <geom name="floor" type="plane" size="5 5 0.1"/>
+    <body name="base" pos="0 0 1">
+      <freejoint name="free_joint"/>
+      <geom name="box_geom" type="box" size="0.1 0.1 0.1" mass="1.0"/>
+    </body>
+  </worldbody>
+</mujoco>
+"""
+  entity_cfg = EntityCfg(spec_fn=lambda: mujoco.MjSpec.from_string(PLANE_XML))
+  scene_cfg = SceneCfg(num_envs=2, entities={"robot": entity_cfg})
+  scene = Scene(scene_cfg, device)
+  model = scene.compile()
+  sim = Simulation(num_envs=2, cfg=SimulationCfg(), model=model, device=device)
+  scene.initialize(model, sim.model, sim.data)
+  sim.expand_model_fields(("geom_size", "geom_rbound", "geom_aabb"))
+  env = Env(scene, sim, device)
+  robot = env.scene["robot"]
+  box_id = robot.indexing.geom_ids[robot.geom_names.index("box_geom")]
+  floor_id = robot.indexing.geom_ids[robot.geom_names.index("floor")]
+  floor_rbound = env.sim.model.geom_rbound[:, floor_id].clone()
+
+  dr.geom_size(env, env_ids=None, ranges={"box_geom": (1.5, 1.5)})
+
+  expected = torch.full((2,), 0.15 * math.sqrt(3), device=device)
+  assert torch.allclose(env.sim.model.geom_rbound[:, box_id], expected, atol=1e-6)
+  assert torch.equal(env.sim.model.geom_rbound[:, floor_id], floor_rbound)
 
 
 # Tendon DR tests.
@@ -2432,6 +2559,27 @@ def test_pair_friction_isotropic_roll(pair_env):
   # Tangent and spin axes untouched.
   for ax in (0, 1, 2):
     assert torch.allclose(after[:, pair_ids, ax], before[:, pair_ids, ax])
+
+
+def test_pair_friction_isotropic_string_ranges_only_mirror_matched_pairs(pair_env):
+  """With string-keyed ranges, the isotropic mirror leaves unmatched pairs alone."""
+  env = pair_env
+  robot = env.scene["robot"]
+  base_pair = robot.indexing.pair_ids[robot.pair_names.index("base_floor")]
+  foot_pair = robot.indexing.pair_ids[robot.pair_names.index("foot_floor")]
+  pf = env.sim.model.pair_friction
+  before = pf.clone()  # pair_env is shared across the module; restore at the end.
+  pf[:, foot_pair, 0] = 0.8
+  pf[:, foot_pair, 1] = 0.2  # Anisotropic and not targeted: must survive.
+
+  dr.pair_friction(env, env_ids=None, ranges={"base_floor": (0.3, 0.3)}, isotropic=True)
+  base, foot = pf[:, base_pair].clone(), pf[:, foot_pair].clone()
+  pf.copy_(before)
+
+  assert torch.allclose(base[:, 0], torch.full_like(base[:, 0], 0.3))
+  assert torch.allclose(base[:, 1], base[:, 0])
+  assert torch.allclose(foot[:, 0], torch.full_like(foot[:, 0], 0.8))
+  assert torch.allclose(foot[:, 1], torch.full_like(foot[:, 1], 0.2))
 
 
 def test_pair_friction_isotropic_roll_dict_ranges(pair_env):
