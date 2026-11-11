@@ -17,6 +17,9 @@ Added
   conditional nodes, which require CUDA 12.4 or newer.
 - Added ``SimulationCfg.warn_solver_overflow`` to silence MuJoCo Warp's per-step
   "iterations limit reached" warning on tasks that deliberately cap the solver.
+- Added the Unitree Go2 asset and the ``Go2-Velocity-Custom`` and
+  ``Go2-Velocity-Rough-Custom`` tasks, vendored from unitree_rl_mjlab on the same
+  velocity_custom base as ``G1-Velocity-Custom``.
 - ``RslRlBaseRunnerCfg.logger`` accepts the import path of an
   ``rsl_rl.utils.LogWriter`` subclass, e.g. ``"my_pkg.writers:MyLogWriter"``.
 - Added ``RewardManager.term_rewards`` and ``RewardManager.get_term()`` for the
