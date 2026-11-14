@@ -3,6 +3,7 @@
 import onnx
 import torch
 
+from mjlab.actuator.pd_actuator import IdealPdActuatorCfg
 from mjlab.entity import Entity
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.envs.mdp.actions import JointPositionAction
@@ -60,6 +61,18 @@ def get_base_metadata(
   ]
   joint_stiffness = env.sim.mj_model.actuator_gainprm[ctrl_ids_natural, 0]
   joint_damping = -env.sim.mj_model.actuator_biasprm[ctrl_ids_natural, 2]
+  # Explicit PD actuators (ideal PD, DC motor) compute torque in torch and drive
+  # MuJoCo motor actuators, whose gainprm/biasprm hold no PD gains. Read their
+  # gains from the actuator config instead.
+  natural_joint_names = [j for j in robot.joint_names if j in joint_name_to_ctrl_id]
+  for act in robot.actuators:
+    if not isinstance(act.cfg, IdealPdActuatorCfg):
+      continue
+    for name in act.target_names:
+      if name in natural_joint_names:
+        i = natural_joint_names.index(name)
+        joint_stiffness[i] = act.cfg.stiffness
+        joint_damping[i] = act.cfg.damping
   observation_term_scale: list = []
   observation_term_flatten_history_dim: list = []
   observation_term_history_length: list = []

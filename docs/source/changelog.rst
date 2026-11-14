@@ -20,6 +20,15 @@ Added
 - Added the Unitree Go2 asset and the ``Go2-Velocity-Custom`` and
   ``Go2-Velocity-Rough-Custom`` tasks, vendored from unitree_rl_mjlab on the same
   velocity_custom base as ``G1-Velocity-Custom``.
+- Added the ``Go2-Tracking-Custom`` motion-tracking task, a port of TrackerLab
+  SuperMimic's Go2 gait imitation (DC motor gains, tracked bodies, reward kernels
+  and terminations) trained with mjlab's PPO, with self-collisions enabled and a
+  small self-collision penalty. Its domain randomization comes from a new shared
+  ``unitree_go2.custom_dr`` module mirroring the custom G1 one (command delay,
+  armature, base mass and size-scaled pushes; gains and COM follow SuperMimic).
+  ``csv_to_npz`` takes ``--robot go2``
+  and ``--output-file`` to save locally instead of uploading to W&B, and
+  ``scripts/tools/kine2go_to_csv.py`` converts Kine2Go Go2 references to CSV.
 - ``RslRlBaseRunnerCfg.logger`` accepts the import path of an
   ``rsl_rl.utils.LogWriter`` subclass, e.g. ``"my_pkg.writers:MyLogWriter"``.
 - Added ``RewardManager.term_rewards`` and ``RewardManager.get_term()`` for the
@@ -54,6 +63,9 @@ Changed
 Fixed
 ^^^^^
 
+- Exported ONNX metadata now reports the configured ``stiffness`` and ``damping``
+  for ideal-PD and DC-motor actuators. It previously read MuJoCo's motor
+  ``gainprm``/``biasprm`` and exported 1 and 0.
 - Delayed position actuators now hold the post-reset joint positions until the
   first action arrives, instead of driving toward 0 for their first ``lag``
   physics steps after every reset. Targets set during the reset are kept.
