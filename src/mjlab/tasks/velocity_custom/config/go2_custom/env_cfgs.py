@@ -10,9 +10,15 @@ from mjlab.envs import mdp as envs_mdp
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers import TerminationTermCfg
 from mjlab.managers.event_manager import EventTermCfg
+from mjlab.managers.observation_manager import ObservationTermCfg
+from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg, ObjRef, RayCastSensorCfg
 from mjlab.tasks.velocity_custom import mdp
-from mjlab.tasks.velocity_custom.mdp import UniformVelocityCommandCfg
+from mjlab.tasks.velocity_custom.mdp import (
+  BodyPoseCommandCfg,
+  UniformVelocityCommandCfg,
+)
 from mjlab.tasks.velocity_custom.velocity_env_cfg import make_velocity_env_cfg
 
 
@@ -171,5 +177,107 @@ def unitree_go2_flat_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     twist_cmd.ranges.lin_vel_x = (-0.5, 1.0)
     twist_cmd.ranges.lin_vel_y = (-0.5, 0.5)
     twist_cmd.ranges.ang_vel_z = (-0.5, 0.5)
+
+  return cfg
+
+
+##
+# Velocity + body pose (height, roll, pitch).
+##
+
+# Measured on the Go2 model with the feet under the hips: the default stance holds
+# the base at 0.295 m, and the legs reach 0.12 to 0.42 m without anything but the
+# feet touching the floor. Commands stay inside that with margin for swing.
+GO2_NOMINAL_HEIGHT = 0.295
+GO2_LEG_HEIGHT_LIMITS = (0.13, 0.40)
+GO2_FOOT_HALF_LENGTH = 0.193
+GO2_FOOT_HALF_WIDTH = 0.115
+
+
+def unitree_go2_pose_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
+  """Go2 flat velocity tracking plus commanded base height, roll and pitch.
+
+  The actor sees six commands: the twist (vx, vy, wz) and the body pose (height,
+  roll, pitch). Roll and pitch apply only while the twist is zero; height applies
+  while walking too, with the lowest heights reserved for slow speeds.
+  """
+  cfg = unitree_go2_flat_env_cfg(play=play)
+
+  twist_cmd = cfg.commands["twist"]
+  assert isinstance(twist_cmd, UniformVelocityCommandCfg)
+  # Posing happens while standing, so stand far more often than the base 5%.
+  twist_cmd.rel_standing_envs = 0.3
+
+  cfg.commands["body_pose"] = BodyPoseCommandCfg(
+    entity_name="robot",
+    twist_command_name="twist",
+    resampling_time_range=(3.0, 8.0),
+    nominal_height=GO2_NOMINAL_HEIGHT,
+    height_range=(0.15, 0.37),
+    roll_range=(-0.35, 0.35),
+    pitch_range=(-0.4, 0.4),
+    rel_nominal_envs=0.25,
+    walking_height_range=(0.15, 0.34),
+    crouch_speed_range=(0.6, 2.0),
+    fast_min_height=0.24,
+    leg_height_limits=GO2_LEG_HEIGHT_LIMITS,
+    foot_half_length=GO2_FOOT_HALF_LENGTH,
+    foot_half_width=GO2_FOOT_HALF_WIDTH,
+  )
+
+  # Observations: the pose command right after the twist; base height for the
+  # critic only.
+  pose_obs = ObservationTermCfg(
+    func=mdp.generated_commands, params={"command_name": "body_pose"}
+  )
+  for group in ("actor", "critic"):
+    terms = cfg.observations[group].terms
+    items = list(terms.items())
+    at = [k for k, _ in items].index("command") + 1
+    cfg.observations[group].terms = dict(
+      items[:at] + [("body_pose", pose_obs)] + items[at:]
+    )
+  cfg.observations["critic"].terms["base_height"] = ObservationTermCfg(
+    func=mdp.base_height
+  )
+
+  # Rewards: track the pose, and stop the base terms from fighting it.
+  cfg.rewards["track_base_height"] = RewardTermCfg(
+    func=mdp.track_base_height,
+    weight=1.0,
+    params={"command_name": "body_pose", "std": 0.04},
+  )
+  cfg.rewards["track_body_attitude"] = RewardTermCfg(
+    func=mdp.track_body_attitude,
+    weight=1.0,
+    params={"command_name": "body_pose", "std": 0.2},
+  )
+  # Flat-body penalty becomes a penalty on tilt away from the commanded attitude.
+  cfg.rewards["body_orientation_l2"] = RewardTermCfg(
+    func=mdp.body_orientation_target_l2,
+    weight=-1.0,
+    params={"command_name": "body_pose"},
+  )
+  # stand_still pins every joint to default while standing, which is exactly when
+  # the robot poses.
+  cfg.rewards.pop("stand_still", None)
+  # Posture keeps only the hips near default; thighs and calves set the pose.
+  hip_std = {r".*_hip_joint": 0.15}
+  pose_params = cfg.rewards["pose"].params
+  pose_params["asset_cfg"] = SceneEntityCfg("robot", joint_names=(r".*_hip_joint",))
+  pose_params["std_standing"] = hip_std
+  pose_params["std_walking"] = hip_std
+  pose_params["std_running"] = {r".*_hip_joint": 0.2}
+  cfg.rewards["pose"].weight = 0.5
+  # Swing clearance scales with the commanded height (0.09 m at nominal).
+  clearance = cfg.rewards["foot_clearance"]
+  clearance.func = mdp.feet_clearance_height_scaled
+  clearance.params = {
+    "pose_command_name": "body_pose",
+    "height_ratio": 0.3,
+    "command_name": "twist",
+    "command_threshold": 0.1,
+    "asset_cfg": clearance.params["asset_cfg"],
+  }
 
   return cfg

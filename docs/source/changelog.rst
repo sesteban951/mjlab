@@ -17,9 +17,11 @@ Added
   conditional nodes, which require CUDA 12.4 or newer.
 - Added ``SimulationCfg.warn_solver_overflow`` to silence MuJoCo Warp's per-step
   "iterations limit reached" warning on tasks that deliberately cap the solver.
-- Added the Unitree Go2 asset and the ``Go2-Velocity-Custom`` and
-  ``Go2-Velocity-Rough-Custom`` tasks, vendored from unitree_rl_mjlab on the same
-  velocity_custom base as ``G1-Velocity-Custom``.
+- Added the Unitree Go2 asset and the ``Go2-Velocity-Custom`` task, vendored from
+  unitree_rl_mjlab on the same velocity_custom base as ``G1-Velocity-Custom``.
+- Added ``Go2-Velocity-Pose-Custom``: Go2 velocity tracking plus commanded base
+  height, roll and pitch. Roll and pitch apply only while standing, and the lowest
+  heights only at slow walking speeds.
 - Added the ``Go2-Tracking-Custom`` motion-tracking task, a port of TrackerLab
   SuperMimic's Go2 gait imitation (DC motor gains, tracked bodies, reward kernels
   and terminations) trained with mjlab's PPO, with self-collisions enabled and a

@@ -44,3 +44,10 @@ def unitree_go2_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
     num_steps_per_env=24,
     max_iterations=10001,
   )
+
+
+def unitree_go2_pose_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+  """PPO configuration for the Go2 velocity + body pose task."""
+  cfg = unitree_go2_ppo_runner_cfg()
+  cfg.experiment_name = "go2_velocity_pose_custom"
+  return cfg

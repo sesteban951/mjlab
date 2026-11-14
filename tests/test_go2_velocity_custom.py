@@ -1,14 +1,12 @@
 """Tests for the vendored Unitree Go2 custom velocity envs."""
 
 import mujoco
-import pytest
 
 from mjlab.asset_zoo.robots.unitree_go2.go2_constants import get_go2_robot_cfg
 from mjlab.entity import Entity
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg
 from mjlab.tasks.velocity_custom.config.go2_custom.env_cfgs import (
   unitree_go2_flat_env_cfg,
-  unitree_go2_rough_env_cfg,
 )
 from mjlab.tasks.velocity_custom.mdp import UniformVelocityCommandCfg
 
@@ -21,16 +19,10 @@ def test_go2_asset_compiles_with_meshes():
     assert mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, name) >= 0
 
 
-@pytest.mark.parametrize(
-  "task_id, make_cfg",
-  [
-    ("Go2-Velocity-Custom", unitree_go2_flat_env_cfg),
-    ("Go2-Velocity-Rough-Custom", unitree_go2_rough_env_cfg),
-  ],
-)
-def test_go2_tasks_are_registered(task_id, make_cfg):
+def test_go2_task_is_registered():
+  task_id = "Go2-Velocity-Custom"
   cfg = load_env_cfg(task_id)
-  expected = make_cfg()
+  expected = unitree_go2_flat_env_cfg()
   assert cfg.viewer == expected.viewer
   assert cfg.rewards == expected.rewards
   assert cfg.scene.terrain is not None and expected.scene.terrain is not None
