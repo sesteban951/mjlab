@@ -1,6 +1,6 @@
 """Convert an mj-nlp gait library into mjlab tracking-motion npz files.
 
-The library clips (e.g. ``trajectories/library/crawl_diffdrive_library/*.npz``) store per-frame
+The library clips (e.g. ``trajectories/g1/library/crawl_diffdrive_library/*.npz``) store per-frame
 full MuJoCo state
 ``state = [qpos(36) | qvel(35)]`` for the G1. mjlab's tracking ``MotionLoader`` instead expects
 per-body world kinematics (``joint_pos, joint_vel, body_pos_w, body_quat_w, body_lin_vel_w,
@@ -355,10 +355,18 @@ def _idle_to_log(
 
 def main(
   input_dir: str = str(
-    _REPO_ROOT / "trajectories" / "library" / "crawl_ff_loop_180_R_001__A229_library"
+    _REPO_ROOT
+    / "trajectories"
+    / "g1"
+    / "library"
+    / "crawl_ff_loop_180_R_001__A229_library"
   ),
   output_dir: str = str(
-    _REPO_ROOT / "trajectories" / "library" / "crawl_ff_loop_180_R_001__A229_tracking"
+    _REPO_ROOT
+    / "trajectories"
+    / "g1"
+    / "library"
+    / "crawl_ff_loop_180_R_001__A229_tracking"
   ),
   input_fps: float = 200.0,
   output_fps: float = 50.0,
@@ -372,7 +380,7 @@ def main(
 
   Args:
     input_dir: Folder of library clips (e.g.
-      ``trajectories/crawl_ff_loop_180_R_001__A229_library``).
+      ``trajectories/g1/library/crawl_ff_loop_180_R_001__A229_library``).
     output_dir: Where to write the tracking-format clips (basename preserved).
     input_fps: Sample rate of the library clips (200 Hz for the mj-nlp crawl grids, 100 Hz for
       the upright walk grids).

@@ -31,6 +31,7 @@ from mjlab.tasks.tracking.config.g1_custom_contactrich.env_cfgs import (
 MOTION_DIR = str(
   Path(mjlab.MJLAB_SRC_PATH).parent.parent
   / "trajectories"
+  / "g1"
   / "library"
   / "crawl_ff_loop_180_R_001__A229_tracking"
 )
@@ -41,6 +42,7 @@ MOTION_DIR = str(
 IDLE_QPOS_CSV = (
   Path(mjlab.MJLAB_SRC_PATH).parent.parent
   / "trajectories"
+  / "g1"
   / "library"
   / "crawl_ff_loop_180_R_001__A229_library"
   / "qpos_idle.csv"

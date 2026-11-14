@@ -153,7 +153,7 @@ To parse a motion, your provide a csv file with a genearilzed configuration `qpo
 ```bash
 # Parse a motion from csv to npz format required for motion tracking.
 uv run python -m mjlab.scripts.csv_to_npz \
-  --input-file trajectories/srb_ik_jump_fwd/srb_ik_jump_fwd_29dof.csv \
+  --input-file trajectories/g1/single/srb_ik_jump_fwd/srb_ik_jump_fwd_29dof.csv \
   --output-name srb_ik_jump_fwd_29dof \
   --input-fps 50.0 \
   --output-fps 50.0 \
@@ -280,8 +280,8 @@ The library ships as raw solver output: one `.npz` per speed storing per-frame f
 ```bash
 # Convert every clip in a library folder to tracking-format npz (local files, no wandb).
 uv run python -m mjlab.scripts.library_to_npz \
-  --input-dir trajectories/crawl_ff_loop_180_R_001__A229_library \
-  --output-dir trajectories/crawl_ff_loop_180_R_001__A229_tracking \
+  --input-dir trajectories/g1/library/crawl_ff_loop_180_R_001__A229_library \
+  --output-dir trajectories/g1/library/crawl_ff_loop_180_R_001__A229_tracking \
   --input-fps 200.0 \
   --output-fps 50.0
 ```

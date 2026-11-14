@@ -23,9 +23,9 @@ import numpy as np
 
 import mjlab
 
-# mjlab repo root and its trajectories dir (where the built libraries live).
+# mjlab repo root and its G1 trajectories dir (where the built libraries live).
 _MJLAB_ROOT = Path(mjlab.MJLAB_SRC_PATH).parent.parent
-_TRAJ_DIR = _MJLAB_ROOT / "trajectories"
+_TRAJ_DIR = _MJLAB_ROOT / "trajectories" / "g1"
 _LIB_DIR = _TRAJ_DIR / "library"  # gait libraries (staged + tracking) live here
 # Master gait grids live in the sibling mj-nlp repo (override with build_library --gait-root).
 _MJNLP_ROOT = _MJLAB_ROOT.parent / "mj-nlp"
