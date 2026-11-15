@@ -4,6 +4,7 @@ Vendored from unitree_rl_mjlab; uses the self-contained velocity_custom base + m
 the same base the G1 custom velocity env is built on.
 """
 
+from mjlab.asset_zoo.robots.unitree_go2.custom_dr import add_custom_go2_actuator_delay
 from mjlab.asset_zoo.robots.unitree_go2.go2_constants import get_go2_robot_cfg
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
@@ -111,6 +112,8 @@ def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   cfg.rewards["foot_gait"].params["offset"] = [0.0, 0.5, 0.5, 0.0]
   cfg.rewards["body_orientation_l2"].params["asset_cfg"].body_names = ("base_link",)
   cfg.rewards["body_ang_vel"].params["asset_cfg"].body_names = ("base_link",)
+  # Double the shared base's -0.05 roll/pitch-rate penalty (Go2 only) to damp the standing sway.
+  cfg.rewards["body_ang_vel"].weight = -0.1
   cfg.rewards["foot_clearance"].params["asset_cfg"].site_names = site_names
   cfg.rewards["foot_slip"].params["asset_cfg"].site_names = site_names
 
@@ -122,6 +125,11 @@ def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     func=mdp.illegal_contact,
     params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
   )
+
+  # Command delay, training only (same 0-40 ms as Go2-Tracking-Custom and the custom G1 envs).
+  # Without it the velocity policy rang at ~9 Hz when standing with >= ~14 ms of deploy latency.
+  if not play:
+    add_custom_go2_actuator_delay(cfg, min_delay_sec=0.0, max_delay_sec=0.04)
 
   # Apply play mode overrides.
   if play:
