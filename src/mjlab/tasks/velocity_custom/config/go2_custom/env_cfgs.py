@@ -124,6 +124,11 @@ def unitree_go2_rough_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     params={"sensor_name": nonfoot_ground_cfg.name, "force_threshold": 10.0},
   )
 
+  # Widen the forward range only to 1.5 m/s (base: 2.0). With command delay, the jump to 2.0
+  # made the policy freeze on fast diagonals from standstill.
+  cfg.commands["twist"].ranges.lin_vel_x = (-1.0, 1.5)
+  cfg.curriculum["command_vel"].params["velocity_stages"][-1]["lin_vel_x"] = (-1.0, 1.5)
+
   # Command delay, training only (same 0-40 ms as Go2-Tracking-Custom and the custom G1 envs).
   # Without it the velocity policy rang at ~9 Hz when standing with >= ~14 ms of deploy latency.
   if not play:
