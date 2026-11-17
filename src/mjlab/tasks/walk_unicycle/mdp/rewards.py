@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING, cast
 import torch
 
 from mjlab.tasks.crawling_fwd.mdp.commands import LibraryMotionCommand
-from mjlab.tasks.walking_diffdrive.mdp.rewards import _twist_active
+from mjlab.tasks.jog_unicycle.mdp.rewards import _twist_active
 from mjlab.utils.lab_api.math import quat_apply
 
 if TYPE_CHECKING:

@@ -19,10 +19,9 @@ from mjlab.tasks.tracking.mdp.observations import *  # noqa: F401, F403
 from mjlab.tasks.tracking.mdp.rewards import *  # noqa: F401, F403
 from mjlab.tasks.tracking.mdp.terminations import *  # noqa: F401, F403
 
-# Upright twist reward (pelvis YAW heading), shared with the diff-drive walk and the jog.
-# Deliberately NOT star-importing crawling_fwd.mdp.rewards, so there is exactly one
-# ``twist_tracking`` in this namespace.
-from mjlab.tasks.walking_diffdrive.mdp.rewards import (  # noqa: F401
+# Upright twist reward (pelvis YAW heading), the jog's. Not star-importing crawling_fwd.mdp.rewards
+# keeps exactly one ``twist_tracking`` in this namespace.
+from mjlab.tasks.jog_unicycle.mdp.rewards import (  # noqa: F401
   feet_slip_twist,
   soft_landing_twist,
   twist_tracking,

@@ -37,10 +37,6 @@ WALK_GAIT_ROOT = (
 # the crawl, the idle csv lives INSIDE a staged library folder; build_library only clears that
 # folder's npz copies on a rebuild, so the csv survives.
 DEFAULT_IDLE_CSV = _LIB_DIR / "crawl_ff_loop_180_R_001__A229_library" / "qpos_idle.csv"
-# Standing idle for the upright walk library: a verbatim copy of mj-nlp's
-# trajectories/g1/poses/stand_idle_qpos.csv (captured static stand, base z 0.776, heading +x,
-# COM 3.5 cm inside the support polygon). Re-copy it here if that file changes.
-WALK_IDLE_CSV = _LIB_DIR / "walk_diffdrive_library" / "qpos_idle.csv"
 # The upright WALK and JOG grids are both written by mj-nlp's g1_mimic_periodic library driver into
 # the same folder -- the family name (gait_library_<family>) is what separates them.
 PERIODIC_GAIT_ROOT = WALK_GAIT_ROOT
@@ -232,43 +228,13 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
       Source("crawl_turn_neg"),
     ),
   ),
-  # Differential-drive UPRIGHT walking: the g1_mimic_periodic walk grids (T = 1.4 s, 141 frames at
-  # 100 Hz -> 70 tracking frames). The grids are already pure -- walk_fwd/bck sweep vx alone, the
-  # turns sweep wz alone -- so the filters are documentation; the idle is a standing pose.
-  "walking_diffdrive": LibrarySpec(
-    name="walk_diffdrive",
-    sources=(
-      Source("walk_fwd", keep={"vy": 0.0, "wz": 0.0}),  # vx +0.50 .. +1.00
-      Source("walk_bck", keep={"vy": 0.0, "wz": 0.0}),  # vx -0.90 .. -0.40
-      Source("walk_turn_pos", keep={"vx": 0.0, "vy": 0.0}),  # wz +0.50 .. +1.50 (pivot)
-      Source(
-        "walk_turn_neg", keep={"vx": 0.0, "vy": 0.0}
-      ),  # wz -1.50 .. -0.50 (mirror)
-    ),
-    gait_root=WALK_GAIT_ROOT,
-    idle_csv=WALK_IDLE_CSV,
-    input_fps=100.0,
-    idle_name="walk_idle.npz",
-  ),
-  # UNICYCLE JOGGING: a genuine 2-D (vx, wz) grid, not two 1-D columns. The straight/backward
-  # families sweep BOTH axes -- that is the whole difference from the diff-drive walk spec above,
-  # whose sources pin wz = 0 -- so their filters keep only vy = 0; the pivot families pin vx = 0.
-  #
-  # THE `family` STRINGS MUST MATCH THE BUILT GRIDS. mj-nlp writes each family to
-  # <gait_root>/gait_library_<family>/; trim this tuple to the families that actually exist before
-  # building. The jog clips come off run_fwd/run_bck configs at sim_dt = 5 ms -> 200 Hz input.
-  # MIXED SOURCE RATES, reconciled by decimation. The arc grids were solved at sim_dt = 5 ms
-  # (200 Hz) and the pivots at 10 ms (100 Hz); a spec stages everything at ONE input_fps, so the
-  # arcs are decimated by 2 to the pivots' rate. Exact, not lossy: the converter's 50 Hz grid is an
-  # integer ratio of both, so 200 -> 100 -> 50 selects the same frames as 200 -> 50. All four
-  # families share the 0.860 s stride, which is what lets them stack at all.
+  # UNICYCLE JOGGING: 2-D (vx, wz) arcs + vx = 0 pivots; every family at 10 ms on a 0.85 s stride
+  # (42.5 frames at 50 Hz -> 43 kept). `family` strings must match mj-nlp's gait_library_<family>.
   "jog_unicycle": LibrarySpec(
     name="jog_unicycle",
     sources=(
-      Source(
-        "run_fwd", keep={"vy": 0.0}, decimate=2
-      ),  # vx>0 x wz sweep (wz=0 = straight)
-      Source("run_bck", keep={"vy": 0.0}, decimate=2),  # vx<0 x wz sweep
+      Source("jog_fwd", keep={"vy": 0.0}),  # vx>0 x wz sweep (wz=0 = straight)
+      Source("jog_bck", keep={"vy": 0.0}),  # vx<0 x wz sweep
       Source("walk_turn_pos_fast", keep={"vx": 0.0, "vy": 0.0}),  # in-place left pivots
       Source(
         "walk_turn_neg_fast", keep={"vx": 0.0, "vy": 0.0}
@@ -276,7 +242,7 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     ),
     gait_root=PERIODIC_GAIT_ROOT,
     idle_csv=JOG_IDLE_CSV,
-    input_fps=100.0,  # the pivots' native rate; the arcs are decimated to it above
+    input_fps=100.0,  # every family's rate (sim_dt 10 ms)
     idle_name="jog_idle.npz",
   ),
   # UNICYCLE WALKING: the jog spec's shape on the walk grids. walk_fwd / walk_bck sweep BOTH vx

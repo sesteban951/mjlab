@@ -1,19 +1,11 @@
 """Unitree G1 unicycle WALKING: drive-and-turn twist command over the walk gait library.
 
-The walking sibling of ``G1-Jog-Unicycle``. Same base (``G1-Tracking-Custom``: feet-only
-frictional contact, the shared custom DR, actuator delay), same blended library command, same
-unicycle sampler, same reference-free actor, same egocentric path/heading rewards, same standing
-idle stop, same pelvis-yaw twist reward. What differs from the jog is the library and its ranges;
-what differs from ``G1-Walking-DiffDrive`` is the command set:
+The walking sibling of ``G1-Jog-Unicycle``: same base (``G1-Tracking-Custom``), library command,
+unicycle sampler, reference-free actor, egocentric path/heading rewards, standing idle stop and
+pelvis-yaw twist reward. Only the library and its commanded ranges differ. Commands: arcs
+``[vx, 0, wz]`` (``wz = 0`` is the straight walk) or pivots ``[0, 0, wz]``, never lateral.
 
-  diff drive   translate XOR rotate   [vx, 0, 0]  or  [0, 0, wz]
-  unicycle     translate AND rotate   [vx, 0, wz] or  [0, 0, wz]      <- this task
-
-``wz = 0`` is the straight walk, so it is the lower edge of the arc mode rather than a mode of its
-own. Lateral motion is still never commanded.
-
-Library: ``LIBRARY_SPECS["walk_unicycle"]``; build/refresh with
-``uv run python -m mjlab.scripts.build_library walk_unicycle``.
+Library: ``LIBRARY_SPECS["walk_unicycle"]``; ``uv run python -m mjlab.scripts.build_library walk_unicycle``.
 """
 
 from dataclasses import replace
@@ -202,9 +194,8 @@ def unitree_g1_walk_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg
     params={"command_name": "motion", "std": 0.4},
   )
 
-  # --- stomping mitigation (hardware): penalize foot xy speed while in contact and the net
-  # contact force at each touchdown, both only while a nonzero twist is commanded. The
-  # velocity task's terms, gated on the library twist (see walking_diffdrive.mdp.rewards).
+  # --- stomping mitigation (hardware): foot xy speed in contact and touchdown force, only while a
+  # nonzero twist is commanded (the velocity task's terms, gated; see jog_unicycle.mdp.rewards).
   cfg.rewards["foot_slip"] = RewardTermCfg(
     func=mdp.feet_slip_twist,
     weight=-0.1,

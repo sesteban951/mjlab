@@ -1,23 +1,12 @@
 """Build a per-controller tracking library from its declarative LibrarySpec.
 
-Selects a filtered subset of an mj-nlp master gait grid (by twist label), stages it (+ optional
-idle csv) into ``<name>_library/``, then FK-converts it into ``<name>_tracking/`` via
-``library_to_npz`` at the spec's own sample rate. The selection lives in
-``crawling_common.library.LIBRARY_SPECS``; the env configs read their ``MOTION_DIR`` from the same
-specs, so the two never drift. Rebuild after the master grids change (e.g. the fwd grid finishing)
-to refresh the tracking libraries.
+Stages the spec's filtered subset of an mj-nlp master gait grid (by twist label, + optional idle
+csv) into ``<name>_library/``, then FK-converts it into ``<name>_tracking/`` via ``library_to_npz``.
+A spec with ``merges`` copies banded selections out of already-built tracking libraries instead.
+Rebuild whenever the master grids change.
 
-  uv run python -m mjlab.scripts.build_library diffdrive            # build one controller
-  uv run python -m mjlab.scripts.build_library walking_diffdrive   # the upright walk library
-  uv run python -m mjlab.scripts.build_library all                  # build every registered controller
-  uv run python -m mjlab.scripts.build_library omni --no-convert True  # dry-run: selection only
-
-A spec with ``merges`` instead of ``sources`` is assembled by copying banded selections
-out of already-built tracking libraries (no staging, no conversion). ``--gait-root`` and
-``--idle-csv`` do not apply to it and are rejected; ``--no-convert`` only prints the
-selection.
-
-(Once ``uv sync`` has registered the console script, ``uv run build-library diffdrive`` also works.)
+  uv run python -m mjlab.scripts.build_library walk_unicycle            # one controller
+  uv run python -m mjlab.scripts.build_library all                      # every registered one
 """
 
 import glob
@@ -266,8 +255,7 @@ def main(
   """Build one controller's tracking library, or ``all`` of them.
 
   Args:
-    controller: a key in ``LIBRARY_SPECS`` (e.g. ``diffdrive``, ``walking_diffdrive``) or
-      ``all``.
+    controller: a key in ``LIBRARY_SPECS`` (e.g. ``diffdrive``, ``walk_unicycle``) or ``all``.
     gait_root: master-grid root, overriding every built spec's own (the crawl specs default to
       the sibling mj-nlp ``examples/g1_gait``, the walk spec to
       ``examples/g1_mimic_periodic/library``).

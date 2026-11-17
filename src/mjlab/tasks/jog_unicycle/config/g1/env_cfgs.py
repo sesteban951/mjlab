@@ -1,18 +1,11 @@
 """Unitree G1 unicycle JOGGING: drive-and-turn twist command over the jog gait library.
 
-The running sibling of ``G1-Walking-DiffDrive``. Same base (``G1-Tracking-Custom``: feet-only
-frictional contact, the shared custom DR, actuator delay), same blended library command, same
-reference-free actor, same egocentric path/heading rewards, same standing idle stop, same
-pelvis-yaw twist reward. ONE difference: the command set.
+Base ``G1-Tracking-Custom`` (feet-only frictional contact, the shared custom DR, actuator delay),
+blended library command, reference-free actor, egocentric path/heading rewards, standing idle stop
+and the pelvis-yaw twist reward. Commands: arcs ``[vx, 0, wz]`` (``wz = 0`` is the straight jog) or
+pivots ``[0, 0, wz]``; lateral motion is never commanded.
 
-  diff drive   translate XOR rotate   [vx, 0, 0]  or  [0, 0, wz]
-  unicycle     translate AND rotate   [vx, 0, wz] or  [0, 0, wz]      <- this task
-
-``wz = 0`` is the straight jog, so it is the lower edge of the arc mode rather than a mode of its
-own. Lateral motion is still never commanded.
-
-Library: ``LIBRARY_SPECS["jog_unicycle"]``; build/refresh with
-``uv run python -m mjlab.scripts.build_library jog_unicycle``.
+Library: ``LIBRARY_SPECS["jog_unicycle"]``; ``uv run python -m mjlab.scripts.build_library jog_unicycle``.
 """
 
 from dataclasses import replace
@@ -49,8 +42,8 @@ IDLE_QPOS_CSV = SPEC.idle_csv
 #     print('vx',t[:,0].min(),t[:,0].max(),'wz',t[:,2].min(),t[:,2].max())"
 #
 # Measured 2026-09-13 over 210 clips: vx [-1.00, +1.50], vy [0, 0], wz [-2.00, +2.00].
-VX_FWD_RANGE = (0.50, 1.50)  # arc-mode forward speed [m/s]   = run_fwd's vx grid
-VX_BCK_RANGE = (-1.00, -0.50)  # arc-mode backward speed [m/s]  = run_bck's vx grid
+VX_FWD_RANGE = (0.50, 1.50)  # arc-mode forward speed [m/s]   = jog_fwd's vx grid
+VX_BCK_RANGE = (-1.00, -0.50)  # arc-mode backward speed [m/s]  = jog_bck's vx grid
 ARC_WZ_RANGE = (0.0, 0.50)  # arc-mode yaw MAGNITUDE [rad/s]; 0 = straight jog
 WZ_RANGE = (1.00, 2.00)  # pivot-mode yaw MAGNITUDE [rad/s]
 #
@@ -198,9 +191,8 @@ def unitree_g1_jog_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     params={"command_name": "motion", "std": 0.4},
   )
 
-  # --- stomping mitigation (hardware): penalize foot xy speed while in contact and the net
-  # contact force at each touchdown, both only while a nonzero twist is commanded. The
-  # velocity task's terms, gated on the library twist (see walking_diffdrive.mdp.rewards).
+  # --- stomping mitigation (hardware): foot xy speed in contact and touchdown force, only while a
+  # nonzero twist is commanded (the velocity task's terms, gated; see jog_unicycle.mdp.rewards).
   cfg.rewards["foot_slip"] = RewardTermCfg(
     func=mdp.feet_slip_twist,
     weight=-0.01,
