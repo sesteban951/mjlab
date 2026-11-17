@@ -223,7 +223,9 @@ class LibraryMotionLoader(MotionLoader):
 
   def _load_motion(self):
     data = np.load(self.motion_file)
-    state = torch.from_numpy(np.asarray(data["state"], dtype=np.float32)).to(
+    # Drop the closing frame (frame 0 one stride on): since #1202 the resampler keeps the end
+    # point, which would play that pose twice per loop (a 1.4 s walk at 50 Hz: 71 frames, not 70).
+    state = torch.from_numpy(np.asarray(data["state"][:-1], dtype=np.float32)).to(
       self.device
     )
     self.motion_base_poss_input = state[:, 0:3]
