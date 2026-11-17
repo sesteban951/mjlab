@@ -15,6 +15,9 @@ Added
   kernels for Blackwell GPUs.
 - Added ``SimulationCfg.graph_conditional`` to toggle MuJoCo Warp's CUDA graph
   conditional nodes, which require CUDA 12.4 or newer.
+- Added ``mjlab.scripts.view_reference``, a kinematic viewer that plays a gait
+  library's reference ghost through sequences of commanded twists (sampled as in
+  training, or touring every clip) without a policy or physics.
 - Added ``SimulationCfg.warn_solver_overflow`` to silence MuJoCo Warp's per-step
   "iterations limit reached" warning on tasks that deliberately cap the solver.
 - Added the Unitree Go2 asset and the ``Go2-Velocity-Custom`` task, vendored from
@@ -65,6 +68,14 @@ Changed
 Fixed
 ^^^^^
 
+- Gait-library tracking tasks (``G1-Walk-Unicycle*``, ``G1-Jog-Unicycle*``,
+  ``G1-WalkJog-Unicycle``, ``G1-Crawling-*``) now serve the reference as the clip
+  unrolled in the world. The reference anchor no longer drifts in roll and pitch, its
+  path follows the reference heading rather than the robot's, and clip transitions are
+  blended in the clips' heading frames, so turning clips no longer distort the body
+  targets. ``library_to_npz`` resamples each stride periodically, computes velocities
+  across the loop seam, and stores the stride map; libraries built before this must be
+  rebuilt (``uv run python -m mjlab.scripts.build_library all --no-stage True``).
 - Exported ONNX metadata now reports the configured ``stiffness`` and ``damping``
   for ideal-PD and DC-motor actuators. It previously read MuJoCo's motor
   ``gainprm``/``biasprm`` and exported 1 and 0.
