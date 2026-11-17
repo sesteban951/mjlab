@@ -1,32 +1,19 @@
-"""Twist-conditioned gait-library motion command for crawling.
+"""Twist-conditioned gait-library motion command.
 
-Extends the BeyondMimic ``MotionCommand`` (per-frame reference tracking of a single
-clip) to a LIBRARY of phase-aligned periodic gaits, each labelled with a planar twist
-``[vx, vy, wz]`` (m/s, m/s, rad/s) stored in the clip's npz. Clips stack into a leading
-``(S, T_max, ...)`` clip axis. A library is normally single-period (every clip ``T_max``
-frames) but may be RAGGED (opt in with ``allow_ragged``) and mix strides: shorter clips
-are padded to ``T_max`` and each one wraps at its own ``n_frames``. Each env samples a
-target twist (on a timer, velocity-style, plus a ``rel_static_envs`` fraction that
-commands a zero twist), snaps it to the nearest library clip (``clip_idx``) under a
-weighted-L2 metric, and gathers the reference with a per-env ``[clip_idx, time_steps]``
-pair. A mid-episode resample keeps the phase clock and just snaps ``clip_idx`` to the
-new twist (no teleport); if the new clip's length differs, ``time_steps`` is remapped to
-the same PHASE. RSI (reference-state init) is applied only at episode reset.
-
-Reference VELOCITIES are served in the ROBOT'S HEADING frame. Every clip walks along its own +x,
-and once the robot has turned (or was RSI'd with yaw noise) its heading differs from the clip's;
-so ``body_lin_vel_w`` / ``body_ang_vel_w`` / ``anchor_*_vel_w`` are rotated by the same yaw delta
-``update_relative_body_poses`` already applies to the relative body targets. The "global" velocity
-rewards and the egocentric path target thus follow the robot's heading instead of pulling it back
-toward the clip's +x after every turn. Positions and orientations are untouched: the relative ones
-were already rotated, and the absolute ones only feed RSI and the ghost.
+Extends the BeyondMimic ``MotionCommand`` to a LIBRARY of periodic one-stride clips, each
+labelled with a planar twist ``[vx, vy, wz]``. Each env snaps its commanded twist to the
+nearest clip and plays it on a per-env ``[clip_idx, time_steps]`` clock.
+The served reference is the clip UNROLLED in the world: clips are stored in their own
+heading frame, and a per-env SE(2) reference frame is advanced by the clip's exact planar
+step every frame and re-based onto the robot at every resample. Height, roll and pitch
+are read straight from the clip, so they cannot drift.
 """
 
 from __future__ import annotations
 
-import copy
 import glob
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -34,29 +21,41 @@ import numpy as np
 import torch
 
 from mjlab.managers import CommandTerm
-from mjlab.tasks.tracking.mdp.commands import (
-  _DESIRED_FRAME_COLORS,
-  MotionCommand,
-  MotionCommandCfg,
-)
+from mjlab.tasks.tracking.mdp.commands import MotionCommand, MotionCommandCfg
 from mjlab.utils.lab_api.math import (
-  matrix_from_quat,
-  quat_apply,
-  quat_box_plus,
   quat_inv,
   quat_mul,
   sample_uniform,
-  yaw_quat,
+  wrap_to_pi,
 )
 
 if TYPE_CHECKING:
-  from collections.abc import Callable
+  from collections.abc import Callable, Iterator
   from typing import Any
 
   import viser
 
   from mjlab.envs import ManagerBasedRlEnv
-  from mjlab.viewer.debug_visualizer import DebugVisualizer
+
+
+def _yaw_angle(q: torch.Tensor) -> torch.Tensor:
+  """Yaw [rad] of wxyz quaternions, ``(..., 4) -> (...)`` (the ``yaw_quat`` angle)."""
+  w, x, y, z = q.unbind(-1)
+  return torch.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
+
+
+def _rot_z(yaw: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+  """Rotate ``(..., 2)`` or ``(..., 3)`` vectors about world z by ``yaw`` (broadcast)."""
+  c, s = torch.cos(yaw), torch.sin(yaw)
+  xy = torch.stack([c * v[..., 0] - s * v[..., 1], s * v[..., 0] + c * v[..., 1]], -1)
+  return xy if v.shape[-1] == 2 else torch.cat([xy, v[..., 2:]], dim=-1)
+
+
+def _yaw_mul(yaw: torch.Tensor, q: torch.Tensor) -> torch.Tensor:
+  """``qz(yaw) * q``: rotate wxyz quaternions about world z by ``yaw`` (broadcast)."""
+  c, s = torch.cos(0.5 * yaw), torch.sin(0.5 * yaw)
+  w, x, y, z = q.unbind(-1)
+  return torch.stack([c * w - s * z, c * x - s * y, c * y + s * x, c * z + s * w], -1)
 
 
 def _phase_remap(
@@ -77,12 +76,12 @@ def _fit_frame_to_clip(t: torch.Tensor, t_max: int, n: torch.Tensor) -> torch.Te
 
 
 class LibraryMotionLoader:
-  """Loads all tracking-format clips in a directory, stacked along a leading clip axis.
+  """Loads every tracking-format clip in a directory, stacked on a leading clip axis.
 
-  Same per-clip schema as ``tracking.mdp.commands.MotionLoader`` (joint_pos/joint_vel +
-  body_{pos,quat,lin_vel,ang_vel}_w), but every array gains a leading ``(S,)`` dimension. Each clip
-  also carries a ``twist`` label ``[vx, vy, wz]`` (m/s, m/s, rad/s), stacked into ``lib_twists
-  (S, 3)``; clips are ordered by filename (deterministic)."""
+  Per-clip schema is ``tracking.mdp.commands.MotionLoader``'s plus ``twist`` ``[vx, vy,
+  wz]`` and ``stride`` ``[tx, ty, dpsi]``, the SE(2) map carrying frame 0 to the closing
+  frame (frame 0 one stride on). Clips are ordered by filename. The ``*_l`` arrays are
+  the clips in their heading frame (see ``_build_local``)."""
 
   def __init__(
     self,
@@ -90,6 +89,8 @@ class LibraryMotionLoader:
     body_indexes: torch.Tensor,
     device: str = "cpu",
     allow_ragged: bool = False,
+    *,
+    anchor_index: int,
   ) -> None:
     files = sorted(glob.glob(os.path.join(motion_dir, "*.npz")))
     if not files:
@@ -146,6 +147,16 @@ class LibraryMotionLoader:
     self.lib_twists = torch.tensor(
       np.stack(twists, axis=0), dtype=torch.float32, device=device
     )  # (S, 3) = [vx, vy, wz]
+    missing = [os.path.basename(f) for f in files if "stride" not in np.load(f).files]
+    if missing:
+      raise KeyError(
+        f"{len(missing)} clip(s) in {motion_dir} have no 'stride' (e.g. {missing[0]}); "
+        "rebuild the library with `uv run python -m mjlab.scripts.build_library`"
+      )
+    strides = [np.asarray(np.load(f)["stride"], dtype=np.float32) for f in files]
+    self.lib_strides = torch.tensor(
+      np.stack(strides, axis=0).reshape(-1, 3), dtype=torch.float32, device=device
+    )  # (S, 3) = [tx, ty, dpsi]
     self.num_clips = len(files)
     self.time_step_total = int(self.joint_pos.shape[1])  # T_max (padded width)
     self.n_frames = torch.tensor(
@@ -154,6 +165,38 @@ class LibraryMotionLoader:
     self.ragged = len(set(counts)) > 1
     hist = {n: counts.count(n) for n in sorted(set(counts))}
     print(f"[INFO] LibraryMotionLoader: {self.num_clips} clips, frames -> count {hist}")
+    self._build_local(anchor_index)
+
+  def _build_local(self, anchor_index: int) -> None:
+    """Re-express every clip in its HEADING frame and store that frame's motion.
+
+    The heading frame sits at the anchor's xy and turns uniformly through the stride's
+    yaw ``dpsi``, i.e. it is the clip's nominal unicycle frame. ``body_*_l`` are the body
+    arrays in it (z stays absolute), so clips of different twist can be blended at a
+    shared phase. ``anchor_step_xy`` / ``_yaw`` are the frame's exact move from each
+    frame to the next, expressed in the frame itself, the last one reaching the closing
+    frame through ``stride``. Composing them replays the clip exactly: nothing drifts."""
+    n = self.n_frames.view(-1, 1)  # (S, 1)
+    frame = torch.arange(self.time_step_total, device=n.device)[None]  # (1, T)
+    # float64: the steps are accumulated over a whole episode by the command.
+    stride = self.lib_strides.double()
+    txy, dpsi = stride[:, :2], stride[:, 2:]  # (S, 2), (S, 1)
+    heading = dpsi * frame / n  # (S, T)
+    axy = self.body_pos_w[:, :, anchor_index, :2].double()  # (S, T, 2)
+    close_xy = _rot_z(dpsi[:, 0], axy[:, 0]) + txy  # anchor at the closing frame
+    next_xy = torch.roll(axy, -1, dims=1).scatter(
+      1, (n - 1)[:, :, None].expand(-1, -1, 2), close_xy[:, None]
+    )
+    real = frame < n  # (S, T) False on a ragged clip's padding
+    self.anchor_step_xy = _rot_z(-heading, next_xy - axy) * real[..., None]
+    self.anchor_step_yaw = (dpsi / n).expand_as(heading) * real
+    yaw = -heading[:, :, None]  # broadcast over bodies
+    centred = self.body_pos_w.double()
+    centred[..., :2] -= axy[:, :, None]
+    self.body_pos_l = _rot_z(yaw, centred).float()
+    self.body_quat_l = _yaw_mul(yaw, self.body_quat_w.double()).float()
+    self.body_lin_vel_l = _rot_z(yaw, self.body_lin_vel_w.double()).float()
+    self.body_ang_vel_l = _rot_z(yaw, self.body_ang_vel_w.double()).float()
 
 
 class LibraryMotionCommand(MotionCommand):
@@ -184,6 +227,7 @@ class LibraryMotionCommand(MotionCommand):
       self.body_indexes,
       device=self.device,
       allow_ragged=cfg.allow_ragged,
+      anchor_index=self.motion_anchor_body_index,
     )
 
     self.twist_metric_weights = torch.tensor(
@@ -214,29 +258,31 @@ class LibraryMotionCommand(MotionCommand):
     # True where the selected reference IS the idle clip. Set by _apply_idle_stop; read by
     # mdp.motion_phase to blank the phase clock so a stopped robot stands STATICALLY.
     self.is_idle = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device)
-    # RSI (reference-state init) is applied only when resampling at an episode reset, not on the
-    # mid-episode timer resample -- so the robot physically transitions between twists.
+    # RSI (reference-state init) only at an episode reset; a timer resample keeps the
+    # robot's state so it physically transitions between twists.
     self._rsi_on_resample = False
-    # Serve reference velocities rotated into the robot's heading frame (see module docstring).
-    # Suspended only while RSI writes the clip's own root velocity into the sim.
-    self._heading_frame = True
+    # Serve reference velocities in the world frame instead of the robot's heading frame.
+    # Only RSI and the viewer scrubber need that, to write them into the sim.
+    self._world_velocities = False
     # Pinned twist for EVERY env (None -> the task's own sampler), e.g. play's --twist or the
     # viewer teleop. Changes arrive through set_fixed_twist() as a one-slot mailbox and are
     # applied in _update_command, on the sim thread.
     self._fixed_twist: tuple[float, float, float] | None = cfg.fixed_twist
     self._twist_request: tuple[bool, tuple[float, float, float] | None] = (False, None)
-    # Egocentric path target for the position cost. The clip's absolute anchor position is a forward
-    # sawtooth (resets each loop), so tracking it fights net progress. Instead we advance this target
-    # by the reference anchor velocity (smooth, periodic) and re-base it to the robot at each twist
-    # resample -- so the position cost measures path deviation without punishing forward progress.
-    self.ref_anchor_pos_w = torch.zeros(self.num_envs, 3, device=self.device)
-    # Egocentric HEADING target for the orientation cost -- the yaw analog of ref_anchor_pos_w. The
-    # clip's absolute anchor orientation sawtooths in yaw each loop (a turn advances heading by wz*T
-    # then wraps back), so tracking it fights net rotation. Instead we advance this target by the
-    # reference anchor angular velocity and re-base it to the robot at each resample, so the
-    # orientation cost measures heading error without punishing net turning.
-    self.ref_anchor_quat_w = torch.zeros(self.num_envs, 4, device=self.device)
-    self.ref_anchor_quat_w[:, 0] = 1.0
+    # Reference frame: world SE(2) pose of the clip's heading frame (the reference
+    # anchor's xy and its yaw). float64: both accumulate a step per frame all episode.
+    self.ref_xy = torch.zeros(self.num_envs, 2, dtype=torch.float64, device=self.device)
+    self.ref_yaw = torch.zeros(self.num_envs, dtype=torch.float64, device=self.device)
+    # Served reference tensors, memoized between changes of the command state, and the
+    # depth of open _mutation() scopes (nothing is memoized inside one).
+    self._cache: dict[str, torch.Tensor] = {}
+    self._mutating = 0
+
+    # Envs whose reference frame must be moved onto the robot at the next update, once
+    # the sim has been forwarded past the resample.
+    self._rebase_pending = torch.zeros(
+      self.num_envs, dtype=torch.bool, device=self.device
+    )
 
     self.body_pos_relative_w = torch.zeros(
       self.num_envs, len(cfg.body_names), 3, device=self.device
@@ -351,22 +397,54 @@ class LibraryMotionCommand(MotionCommand):
       self.time_steps[env_ids], self.motion.time_step_total, n
     )
 
+  @contextmanager
+  def _mutation(self) -> Iterator[None]:
+    """Scope of a change to the command state (clip, phase, blend, reference frame).
+
+    The served reference is memoized between such changes; inside one it is recomputed
+    on every read, so a half-updated state is never cached."""
+    self._mutating += 1
+    self._cache.clear()
+    try:
+      yield
+    finally:
+      self._mutating -= 1
+      self._cache.clear()
+
+  def invalidate_reference(self) -> None:
+    """Drop the memoized reference. Call after writing the command state from outside
+    (e.g. ``time_steps`` or ``clip_idx`` from a script or a viewer callback)."""
+    self._cache.clear()
+
+  def _cached(self, key: str, compute: Callable[[], torch.Tensor]) -> torch.Tensor:
+    """``compute()``, memoized until the command state next changes. Read-only."""
+    if self._mutating:
+      return compute()
+    if key not in self._cache:
+      self._cache[key] = compute()
+    return self._cache[key]
+
   def reset_to_frame(self, env_ids: torch.Tensor, frame: int) -> None:
     # The viewer scrubber runs over the padded ``[0, T_max)``: read its frame as a
     # phase.
     n = self.motion.n_frames[self.clip_idx[env_ids]]
-    self.time_steps[env_ids] = _fit_frame_to_clip(
-      torch.full_like(n, int(frame)), self.motion.time_step_total, n
-    )
-    self._write_reference_state_to_sim(
-      env_ids,
-      self.body_pos_w[env_ids, 0],
-      self.body_quat_w[env_ids, 0],
-      self.body_lin_vel_w[env_ids, 0],
-      self.body_ang_vel_w[env_ids, 0],
-      self.joint_pos[env_ids],
-      self.joint_vel[env_ids],
-    )
+    with self._mutation():
+      self.time_steps[env_ids] = _fit_frame_to_clip(
+        torch.full_like(n, int(frame)), self.motion.time_step_total, n
+      )
+      self._world_velocities = True
+      try:
+        self._write_reference_state_to_sim(
+          env_ids,
+          self.body_pos_w[env_ids, 0],
+          self.body_quat_w[env_ids, 0],
+          self.body_lin_vel_w[env_ids, 0],
+          self.body_ang_vel_w[env_ids, 0],
+          self.joint_pos[env_ids],
+          self.joint_vel[env_ids],
+        )
+      finally:
+        self._world_velocities = False
 
   def _apply_idle_stop(self) -> None:
     """Force an exactly-zero twist wherever the reference snapped to the idle clip.
@@ -415,11 +493,12 @@ class LibraryMotionCommand(MotionCommand):
     return self._fixed_twist
 
   def _resample_command(self, env_ids: torch.Tensor) -> None:
-    # Re-roll the twist -> clip selection. Pick clip_idx BEFORE any RSI so the base
-    # reads body_pos_w[env_ids, 0] from the newly selected clip. A pin REPLACES the
-    # sampler rather than overriding its draw, so the clip is snapped once: a sampler
-    # draw of the other stride family would otherwise remap the phase twice and jitter
-    # it by a frame.
+    with self._mutation():
+      self._resample_reference(env_ids)
+
+  def _resample_reference(self, env_ids: torch.Tensor) -> None:
+    # Pick the clip BEFORE any RSI so the teleport reads the new clip. A pin REPLACES
+    # the sampler, so the clip is snapped (and its phase remapped) exactly once.
     if self._fixed_twist is None:
       self._resample_twist(env_ids)
     else:
@@ -427,30 +506,19 @@ class LibraryMotionCommand(MotionCommand):
         self._fixed_twist, dtype=torch.float32, device=self.device
       )
       self._snap_to_library(env_ids)
-    # RSI (start-frame sampling + teleport to the reference pose) only at episode reset. On the
-    # mid-episode timer resample we keep the phase clock and the robot's state, so it physically
-    # transitions to the new twist's gait (a length change remaps the phase, see
-    # _snap_to_library).
     if self._rsi_on_resample:
-      # The base writes the clip's root velocity into the sim as part of the teleport. That must
-      # be the clip's own world-frame velocity: the robot's PRE-teleport heading is stale here, so
-      # the heading rotation is suspended for the write.
-      self._heading_frame = False
+      # Episode reset: start at the env origin facing +x and teleport the robot onto
+      # the reference there, with the reference's own world-frame velocity.
+      self.ref_xy[env_ids] = self._env.scene.env_origins[env_ids, :2].double()
+      self.ref_yaw[env_ids] = 0.0
+      self._world_velocities = True
       try:
         super()._resample_command(env_ids)
       finally:
-        self._heading_frame = True
-      # Robot was teleported onto the reference: anchor the path + heading targets there.
-      self.ref_anchor_pos_w[env_ids] = self.anchor_pos_w[env_ids]
-      self.ref_anchor_quat_w[env_ids] = self.anchor_quat_w[env_ids]
-    else:
-      # Timer resample (no teleport): re-base the horizontal target at the robot so a forward lead
-      # isn't punished, but keep the reference height so the position cost still tracks z.
-      self.ref_anchor_pos_w[env_ids, :2] = self.robot_anchor_pos_w[env_ids, :2]
-      self.ref_anchor_pos_w[env_ids, 2] = self.anchor_pos_w[env_ids, 2]
-      # Re-base the heading target at the robot's current orientation so a turn already made isn't
-      # punished; net yaw then accumulates from here via the reference angular velocity.
-      self.ref_anchor_quat_w[env_ids] = self.robot_anchor_quat_w[env_ids]
+        self._world_velocities = False
+    # Every resample re-bases the reference frame onto the robot (see _rebase). After
+    # RSI that absorbs the xy / yaw pose noise, which a reference-free actor cannot see.
+    self._rebase_pending[env_ids] = True
 
     # Whatever picked the twist above (base sampler, subclass sampler, or a teleop pin), collapse
     # near-idle commands onto the idle clip's exact zero.
@@ -472,40 +540,46 @@ class LibraryMotionCommand(MotionCommand):
     finally:
       self._rsi_on_resample = False
 
+  def _rebase(self, env_ids: torch.Tensor) -> None:
+    """Move the reference frame onto the robot: its anchor's xy and heading.
+
+    Forgives the path and heading error accumulated so far, so the root terms measure
+    drift since the last resample. Height, roll and pitch stay the clip's. Needs the
+    robot's kinematics forwarded past any teleport."""
+    if env_ids.numel() == 0:
+      return
+    robot_q = self.robot_anchor_quat_w[env_ids]
+    dyaw = _yaw_angle(quat_mul(robot_q, quat_inv(self.anchor_quat_w[env_ids])))
+    self.ref_yaw[env_ids] = wrap_to_pi(self.ref_yaw[env_ids] + dyaw.double())
+    self.ref_xy[env_ids] = self.robot_anchor_pos_w[env_ids, :2].double()
+    self._rebase_pending[env_ids] = False
+
   def _update_command(self, env_ids: torch.Tensor | None = None) -> None:
-    # A pin request from set_fixed_twist(): apply it to every env through the timer path.
-    if self._twist_request[0]:
-      _, twist = self._twist_request
-      self._twist_request = (False, None)
-      self._fixed_twist = twist
-      self._resample_command(torch.arange(self.num_envs, device=self.device))
-    # Every step, not only at resample: keeps a live teleop twist and any subclass sampler
-    # consistent with the snapped clip (the velocity task re-zeroes its standing envs the same way).
-    self._apply_idle_stop()
-    # Advance the phase clock and LOOP each clip at its own length -- periodic gaits, no
-    # resample/RSI at the clip boundary (twist resampling is timer-driven; see
-    # _resample_command). On a reset call (env_ids given) only the reset envs advance,
-    # so a partial reset does not tick other envs' clocks or path targets.
-    ids = slice(None) if env_ids is None else env_ids
-    self.time_steps[ids] += 1
-    # Wrap at the CLIP'S OWN length, not a library-wide T. Identical to `%
-    # time_step_total` when every clip is the same length; in a ragged library it is
-    # what lets a 70-frame walk and a 43-frame jog each cycle at their native period off
-    # one frame-per-step clock.
-    self.time_steps[ids] %= self.motion.n_frames[self.clip_idx[ids]]
+    with self._mutation():
+      # A pin request from set_fixed_twist(): apply it to every env via the timer path.
+      if self._twist_request[0]:
+        _, twist = self._twist_request
+        self._twist_request = (False, None)
+        self._fixed_twist = twist
+        self._resample_command(torch.arange(self.num_envs, device=self.device))
+      # Every step, not only at resample: keeps a live teleop twist and any subclass
+      # sampler consistent with the snapped clip.
+      self._apply_idle_stop()
+      # On a reset call (env_ids given) only the reset envs advance, so a partial reset
+      # does not tick other envs' clocks or reference frames.
+      ids = slice(None) if env_ids is None else env_ids
+      pending = self._rebase_pending.clone()
+      if env_ids is not None:
+        pending[:] = False
+        pending[env_ids] = self._rebase_pending[env_ids]
+      self._rebase(pending.nonzero().flatten())
+      # Advance the reference frame by the served clip's exact planar step, then the
+      # phase clock.
+      step_xy, step_yaw = self._planar_step()
+      self.ref_xy[ids] += _rot_z(self.ref_yaw[ids], step_xy[ids])
+      self.ref_yaw[ids] = wrap_to_pi(self.ref_yaw[ids] + step_yaw[ids])
+      self._advance_clock(ids)
     self.update_relative_body_poses()
-    # Advance the egocentric path target by the reference anchor velocity (smooth & periodic, so it
-    # does NOT sawtooth like the clip's absolute position), expressed in the ROBOT'S heading frame
-    # so the path continues in the direction the robot faces, not the clip's +x. Idle clips have
-    # zero velocity -> the target holds, so the position cost still pins the idle pose in place.
-    self.ref_anchor_pos_w[ids] += self.anchor_lin_vel_w[ids] * self._env.step_dt
-    # Advance the heading target by the reference anchor angular velocity (heading frame; the yaw
-    # rate is invariant to that rotation). quat_box_plus left-multiplies exp(w*dt) onto the target;
-    # idle clips have w=0 so it holds. Non-sawtooth -> net yaw accumulates, unlike the clip's
-    # absolute (looping) heading.
-    self.ref_anchor_quat_w[ids] = quat_box_plus(
-      self.ref_anchor_quat_w[ids], self.anchor_ang_vel_w[ids] * self._env.step_dt
-    )
     # Fold failure counts into the EMA only on the per-step update so manual resets do not decay
     # it faster (same rule as the base MotionCommand).
     if env_ids is None and self.cfg.sampling_mode == "adaptive":
@@ -515,178 +589,113 @@ class LibraryMotionCommand(MotionCommand):
       )
       self._current_bin_failed.zero_()
 
-  # --- reference accessors: index [clip_idx, time_steps] instead of [time_steps] ----------------
+  def _advance_clock(self, ids: torch.Tensor | slice) -> None:
+    """One frame on; each clip loops at its OWN length (a ragged library mixes strides)."""
+    self.time_steps[ids] += 1
+    self.time_steps[ids] %= self.motion.n_frames[self.clip_idx[ids]]
+
+  # --- the served clip sample, in the clip's heading frame (subclasses blend here) ---
+
+  def _local_pos(self) -> torch.Tensor:
+    return self.motion.body_pos_l[self.clip_idx, self.time_steps]
+
+  def _local_quat(self) -> torch.Tensor:
+    return self.motion.body_quat_l[self.clip_idx, self.time_steps]
+
+  def _local_lin_vel(self) -> torch.Tensor:
+    return self.motion.body_lin_vel_l[self.clip_idx, self.time_steps]
+
+  def _local_ang_vel(self) -> torch.Tensor:
+    return self.motion.body_ang_vel_l[self.clip_idx, self.time_steps]
+
+  def _joint_pos(self) -> torch.Tensor:
+    return self.motion.joint_pos[self.clip_idx, self.time_steps]
+
+  def _joint_vel(self) -> torch.Tensor:
+    return self.motion.joint_vel[self.clip_idx, self.time_steps]
+
+  def _planar_step(self) -> tuple[torch.Tensor, torch.Tensor]:
+    """The reference frame's move over the next step, in its own heading frame: xy
+    ``(N, 2)`` and yaw ``(N,)``."""
+    return (
+      self.motion.anchor_step_xy[self.clip_idx, self.time_steps],
+      self.motion.anchor_step_yaw[self.clip_idx, self.time_steps],
+    )
+
+  # --- reference accessors: the heading-frame sample placed by the reference frame ---
 
   @property
   def joint_pos(self) -> torch.Tensor:
-    return self.motion.joint_pos[self.clip_idx, self.time_steps]
+    return self._cached("joint_pos", self._joint_pos)
 
   @property
   def joint_vel(self) -> torch.Tensor:
-    return self.motion.joint_vel[self.clip_idx, self.time_steps]
+    return self._cached("joint_vel", self._joint_vel)
+
+  def _world_pos(self) -> torch.Tensor:
+    origin = torch.cat(
+      [self.ref_xy.float(), self._env.scene.env_origins[:, 2:]], dim=-1
+    )
+    return _rot_z(self.ref_yaw.float()[:, None], self._local_pos()) + origin[:, None]
+
+  def _world_quat(self) -> torch.Tensor:
+    return _yaw_mul(self.ref_yaw.float()[:, None], self._local_quat())
 
   @property
   def body_pos_w(self) -> torch.Tensor:
-    return (
-      self.motion.body_pos_w[self.clip_idx, self.time_steps]
-      + self._env.scene.env_origins[:, None, :]
-    )
+    return self._cached("body_pos_w", self._world_pos)
 
   @property
   def body_quat_w(self) -> torch.Tensor:
-    return self.motion.body_quat_w[self.clip_idx, self.time_steps]
+    return self._cached("body_quat_w", self._world_quat)
 
   @property
   def anchor_pos_w(self) -> torch.Tensor:
-    return (
-      self.motion.body_pos_w[
-        self.clip_idx, self.time_steps, self.motion_anchor_body_index
-      ]
-      + self._env.scene.env_origins
-    )
+    return self.body_pos_w[:, self.motion_anchor_body_index]
 
   @property
   def anchor_quat_w(self) -> torch.Tensor:
-    return self.motion.body_quat_w[
-      self.clip_idx, self.time_steps, self.motion_anchor_body_index
-    ]
+    return self.body_quat_w[:, self.motion_anchor_body_index]
 
-  # --- velocities: clip-frame gathers (subclasses override these; blending lerps two clips) ------
+  # The names the egocentric root rewards read: the unrolled reference anchor.
+  @property
+  def ref_anchor_pos_w(self) -> torch.Tensor:
+    return self.anchor_pos_w
 
-  def _clip_body_lin_vel_w(self) -> torch.Tensor:
-    return self.motion.body_lin_vel_w[self.clip_idx, self.time_steps]
-
-  def _clip_body_ang_vel_w(self) -> torch.Tensor:
-    return self.motion.body_ang_vel_w[self.clip_idx, self.time_steps]
-
-  def _clip_anchor_lin_vel_w(self) -> torch.Tensor:
-    return self.motion.body_lin_vel_w[
-      self.clip_idx, self.time_steps, self.motion_anchor_body_index
-    ]
-
-  def _clip_anchor_ang_vel_w(self) -> torch.Tensor:
-    return self.motion.body_ang_vel_w[
-      self.clip_idx, self.time_steps, self.motion_anchor_body_index
-    ]
+  @property
+  def ref_anchor_quat_w(self) -> torch.Tensor:
+    return self.anchor_quat_w
 
   # --- velocities: served in the robot's heading frame -------------------------------------------
 
-  def _heading_delta(self) -> torch.Tensor:
-    """Yaw-only rotation taking the clip's frame to the robot's heading, (N, 4) wxyz -- the same
-    ``delta_ori_w`` that ``update_relative_body_poses`` applies to the relative body targets."""
-    return yaw_quat(quat_mul(self.robot_anchor_quat_w, quat_inv(self.anchor_quat_w)))
-
-  def _to_heading(self, v: torch.Tensor) -> torch.Tensor:
-    """Rotate clip-frame vectors, (N, 3) or (N, K, 3), into the robot's heading frame."""
-    if not self._heading_frame:
-      return v
-    q = self._heading_delta()
-    if v.ndim == 3:
-      q = q[:, None, :].expand(-1, v.shape[1], -1)
-    return quat_apply(q, v)
+  def _velocity_yaw(self) -> torch.Tensor:
+    """Yaw ``(N,)`` taking heading-frame velocities to the served frame: the ROBOT'S
+    heading (the world reference turned by the yaw delta ``update_relative_body_poses``
+    applies to the relative body targets), or the world while ``_world_velocities``."""
+    if self._world_velocities:
+      return self.ref_yaw.float()
+    delta = quat_mul(self.robot_anchor_quat_w, quat_inv(self.anchor_quat_w))
+    return self.ref_yaw.float() + _yaw_angle(delta)
 
   @property
   def body_lin_vel_w(self) -> torch.Tensor:
-    return self._to_heading(self._clip_body_lin_vel_w())
+    local = self._cached("lin_vel_l", self._local_lin_vel)
+    return _rot_z(self._velocity_yaw()[:, None], local)
 
   @property
   def body_ang_vel_w(self) -> torch.Tensor:
-    return self._to_heading(self._clip_body_ang_vel_w())
+    local = self._cached("ang_vel_l", self._local_ang_vel)
+    return _rot_z(self._velocity_yaw()[:, None], local)
 
   @property
   def anchor_lin_vel_w(self) -> torch.Tensor:
-    return self._to_heading(self._clip_anchor_lin_vel_w())
+    local = self._cached("lin_vel_l", self._local_lin_vel)
+    return _rot_z(self._velocity_yaw(), local[:, self.motion_anchor_body_index])
 
   @property
   def anchor_ang_vel_w(self) -> torch.Tensor:
-    return self._to_heading(self._clip_anchor_ang_vel_w())
-
-  # --- debug vis: draw the reference where the rewards want the robot ----------------------------
-
-  def _egocentric_body_poses(self) -> tuple[torch.Tensor, torch.Tensor]:
-    """The served body poses re-based onto the egocentric anchor target, (N, B, 3) and (N, B, 4).
-
-    The clip's absolute poses live in the clip's own frame (origin, +x, one stride, then loop), so
-    drawing them parks the ghost at the env origin, snaps it back a stride every loop and slides it
-    during a blend. No reward looks at that: the root terms track ``ref_anchor_*`` (re-based to the
-    robot at each resample, advanced by the reference velocity) and the body terms are anchor-
-    relative. Carrying each body's anchor-relative pose over to ``ref_anchor_*`` puts the reference
-    where the rewards want the robot, so the ghost-to-robot gap IS the tracking error.
-    """
-    n_bodies = self.body_pos_w.shape[1]
-    q_clip_inv = quat_inv(self.anchor_quat_w)[:, None, :].expand(-1, n_bodies, -1)
-    rel_pos = quat_apply(q_clip_inv, self.body_pos_w - self.anchor_pos_w[:, None, :])
-    rel_quat = quat_mul(q_clip_inv, self.body_quat_w)
-    q_ref = self.ref_anchor_quat_w[:, None, :].expand(-1, n_bodies, -1)
-    pos = self.ref_anchor_pos_w[:, None, :] + quat_apply(q_ref, rel_pos)
-    return pos, quat_mul(q_ref, rel_quat)
-
-  def _debug_vis_impl(self, visualizer: DebugVisualizer) -> None:
-    """Same ghost / frames as the base, drawn at the egocentric target instead of the clip's
-    absolute (looping) pose -- see ``_egocentric_body_poses``."""
-    env_indices = visualizer.get_env_indices(self.num_envs)
-    if not env_indices:
-      return
-    body_pos_w, body_quat_w = self._egocentric_body_poses()
-
-    if self.cfg.viz.mode == "ghost":
-      if self._ghost_model is None:
-        # Visual geoms only, as in the base: collision geoms get alpha 0 so the viewer drops them.
-        self._ghost_model = copy.deepcopy(self._env.sim.mj_model)
-        for gi in range(self._ghost_model.ngeom):
-          if (
-            self._ghost_model.geom_contype[gi] != 0
-            or self._ghost_model.geom_conaffinity[gi] != 0
-          ):
-            self._ghost_model.geom_rgba[gi, 3] = 0
-          else:
-            self._ghost_model.geom_rgba[gi] = self._ghost_color
-
-      indexing = self._env.scene[self.cfg.entity_name].indexing
-      free_joint_q_adr = indexing.free_joint_q_adr.cpu().numpy()
-      joint_q_adr = indexing.joint_q_adr.cpu().numpy()
-      for batch in env_indices:
-        qpos = np.zeros(self._env.sim.mj_model.nq)
-        qpos[free_joint_q_adr[0:3]] = body_pos_w[batch, 0].cpu().numpy()
-        qpos[free_joint_q_adr[3:7]] = body_quat_w[batch, 0].cpu().numpy()
-        qpos[joint_q_adr] = self.joint_pos[batch].cpu().numpy()
-        visualizer.add_ghost_mesh(qpos, model=self._ghost_model, label=f"ghost_{batch}")
-
-    elif self.cfg.viz.mode == "frames":
-      for batch in env_indices:
-        desired_pos = body_pos_w[batch].cpu().numpy()
-        desired_rotm = matrix_from_quat(body_quat_w[batch]).cpu().numpy()
-        current_pos = self.robot_body_pos_w[batch].cpu().numpy()
-        current_rotm = matrix_from_quat(self.robot_body_quat_w[batch]).cpu().numpy()
-        for i, body_name in enumerate(self.cfg.body_names):
-          visualizer.add_frame(
-            position=desired_pos[i],
-            rotation_matrix=desired_rotm[i],
-            scale=0.08,
-            label=f"desired_{body_name}_{batch}",
-            axis_colors=_DESIRED_FRAME_COLORS,
-          )
-          visualizer.add_frame(
-            position=current_pos[i],
-            rotation_matrix=current_rotm[i],
-            scale=0.12,
-            label=f"current_{body_name}_{batch}",
-          )
-        visualizer.add_frame(
-          position=self.ref_anchor_pos_w[batch].cpu().numpy(),
-          rotation_matrix=matrix_from_quat(self.ref_anchor_quat_w[batch]).cpu().numpy(),
-          scale=0.1,
-          label=f"desired_anchor_{batch}",
-          axis_colors=_DESIRED_FRAME_COLORS,
-        )
-        visualizer.add_frame(
-          position=self.robot_anchor_pos_w[batch].cpu().numpy(),
-          rotation_matrix=matrix_from_quat(self.robot_anchor_quat_w[batch])
-          .cpu()
-          .numpy(),
-          scale=0.15,
-          label=f"current_anchor_{batch}",
-        )
+    local = self._cached("ang_vel_l", self._local_ang_vel)
+    return _rot_z(self._velocity_yaw(), local[:, self.motion_anchor_body_index])
 
   # --- viser GUI: the base's motion scrubber + a twist pin ---------------------------------------
 
@@ -702,8 +711,14 @@ class LibraryMotionCommand(MotionCommand):
     a "Pin twist" checkbox. While pinned, every env is commanded the slider twist (through
     set_fixed_twist, so applied on the sim thread); unpinning returns to the task's sampler. An
     axis the library never varies is shown as a fixed value."""
+
+    def scrubbed() -> None:  # the base scrubber writes time_steps directly
+      self.invalidate_reference()
+      if on_change is not None:
+        on_change()
+
     super().create_gui(
-      name, server, get_env_idx, on_change=on_change, request_action=request_action
+      name, server, get_env_idx, on_change=scrubbed, request_action=request_action
     )
     lo = self.motion.lib_twists.min(dim=0).values.tolist()
     hi = self.motion.lib_twists.max(dim=0).values.tolist()

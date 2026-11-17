@@ -60,11 +60,10 @@ def egocentric_anchor_position_error_exp(
 ) -> torch.Tensor:
   """exp(-||ref_anchor_pos_w - robot_anchor_pos_w||^2 / std^2).
 
-  Unlike ``motion_global_anchor_position_error_exp`` (which tracks the clip's ABSOLUTE world
-  position -- a forward sawtooth that resets each loop and so penalizes net progress),
-  ``ref_anchor_pos_w`` is an egocentric path target: re-based to the robot at each twist resample and
-  advanced by the reference anchor velocity. It penalizes drifting off the intended path (lateral
-  slip, forward lag, wrong height) without punishing forward progress.
+  ``ref_anchor_pos_w`` is the anchor of the reference clip UNROLLED in the world: re-based
+  onto the robot at each resample, then advanced by the clip's own planar step, with the
+  clip's height. It penalizes drifting off the commanded path since the last resample
+  (lateral slip, heading drift, forward lag, wrong height) without punishing progress.
   """
   cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
   error = torch.sum(torch.square(cmd.ref_anchor_pos_w - cmd.robot_anchor_pos_w), dim=-1)
@@ -76,12 +75,10 @@ def egocentric_anchor_orientation_error_exp(
 ) -> torch.Tensor:
   """exp(-quat_error(ref_anchor_quat_w, robot_anchor_quat_w)^2 / std^2).
 
-  Orientation analog of ``egocentric_anchor_position_error_exp``. Unlike
-  ``motion_global_anchor_orientation_error_exp`` (which tracks the clip's ABSOLUTE anchor
-  orientation -- whose yaw sawtooths each loop for turning gaits, so net rotation is penalized),
-  ``ref_anchor_quat_w`` is an egocentric heading target: re-based to the robot at each resample and
-  advanced by the reference anchor angular velocity. It penalizes heading error (and keeps
-  uprightness) without punishing net turning.
+  Orientation analog of ``egocentric_anchor_position_error_exp``. ``ref_anchor_quat_w``
+  is the unrolled reference anchor's orientation: its heading is re-based onto the robot
+  at each resample and then turns with the clip, while roll and pitch are the clip's own
+  at the current frame. It penalizes heading drift and tilt without punishing turning.
   """
   cmd = cast(LibraryMotionCommand, env.command_manager.get_term(command_name))
   error = quat_error_magnitude(cmd.ref_anchor_quat_w, cmd.robot_anchor_quat_w) ** 2

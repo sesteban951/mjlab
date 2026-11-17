@@ -27,6 +27,7 @@ def _write_clip(d: Path, name: str, n: int, twist, body_frames: int | None = Non
     d / name,
     fps=np.array([50.0]),
     twist=np.asarray(twist, dtype=np.float32),
+    stride=np.zeros(3),
     joint_pos=rng.standard_normal((n, NJ)).astype(np.float32),
     joint_vel=rng.standard_normal((n, NJ)).astype(np.float32),
     body_pos_w=rng.standard_normal((nb, NB, 3)).astype(np.float32),
@@ -44,7 +45,9 @@ def ragged_dir(tmp_path: Path) -> Path:
 
 
 def _load(d: Path, allow_ragged: bool) -> LibraryMotionLoader:
-  return LibraryMotionLoader(str(d), torch.arange(NB), "cpu", allow_ragged=allow_ragged)
+  return LibraryMotionLoader(
+    str(d), torch.arange(NB), "cpu", allow_ragged=allow_ragged, anchor_index=0
+  )
 
 
 def test_loader_rejects_mixed_lengths_by_default(ragged_dir: Path) -> None:
