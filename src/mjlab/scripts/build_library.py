@@ -90,6 +90,9 @@ def _verify(spec: LibrarySpec, tracking_dir: Optional[Path] = None) -> list[str]
     reasons.append("spec.idle=True but there is no zero-twist clip")
   if dupes:
     reasons.append(f"{dupes} duplicate twist label(s)")
+  no_stride = sum("stride" not in np.load(f).files for f in files)
+  if no_stride:
+    reasons.append(f"{no_stride} clip(s) carry no 'stride' (built by an old converter)")
   print(
     f"  verify: {len(files)} clips | T={sorted(frames)} | "
     f"idle={'yes' if has_idle else 'no'} | duplicate twists={dupes} -> "
@@ -187,10 +190,12 @@ def build(
   gait_root: Optional[Path] = None,
   idle_csv: Optional[Path] = None,
   convert: bool = True,
+  stage: bool = True,
 ) -> None:
-  """Stage the spec's filtered clip selection (+ idle) and (optionally) FK-convert to tracking npz.
+  """Stage the spec's filtered clip selection (+ idle) and FK-convert it to tracking npz.
 
-  ``gait_root`` / ``idle_csv`` override the spec's own (CLI use); None takes the spec's."""
+  ``gait_root`` / ``idle_csv`` override the spec's own (CLI use); None takes the spec's.
+  ``stage=False`` re-converts the clips already staged in ``<name>_library``."""
   if spec.merges:
     if gait_root is not None or idle_csv is not None:
       raise ValueError("--gait-root / --idle-csv do not apply to a merge spec")
@@ -201,6 +206,12 @@ def build(
   print(f"\n== library '{spec.name}' -> {spec.tracking_dir.name} ==")
   print(f"  grids: {gait_root} @ {spec.input_fps:g} Hz")
   lib = spec.library_dir
+  if not stage:
+    if not any(lib.glob("*.npz")):
+      raise FileNotFoundError(f"--no-stage, but nothing is staged in {lib}")
+    print(f"  --no-stage: re-converting the clips already in {lib.name}")
+    _convert(spec)
+    return
   # Clear only the staged npz copies. The staging folder may also be the HOME of the spec's idle
   # csv (the walk library keeps its standing pose there, like the original crawl library), and
   # that must survive a rebuild.
@@ -234,14 +245,20 @@ def build(
     print("  --no-convert: selection only, tracking library NOT built.")
     return
 
+  _convert(spec)
+
+
+def _convert(spec: LibrarySpec) -> None:
+  """FK-convert the spec's staged clips into its tracking dir, then verify it."""
   # Lazy import: only the actual conversion needs torch / the mjlab sim scene.
   from mjlab.scripts.library_to_npz import main as convert_to_tracking
 
   convert_to_tracking(
-    input_dir=str(lib),
+    input_dir=str(spec.library_dir),
     output_dir=str(spec.tracking_dir),
     input_fps=spec.input_fps,
     idle_out=spec.idle_name,
+    align_phase=spec.align_phase,
   )
   _require_ok(spec)
 
@@ -251,16 +268,17 @@ def main(
   gait_root: Optional[str] = None,
   idle_csv: Optional[str] = None,
   no_convert: bool = False,
+  no_stage: bool = False,
 ) -> None:
   """Build one controller's tracking library, or ``all`` of them.
 
   Args:
-    controller: a key in ``LIBRARY_SPECS`` (e.g. ``diffdrive``, ``walk_unicycle``) or ``all``.
-    gait_root: master-grid root, overriding every built spec's own (the crawl specs default to
-      the sibling mj-nlp ``examples/g1_gait``, the walk spec to
-      ``examples/g1_mimic_periodic/library``).
+    controller: a key in ``LIBRARY_SPECS`` (e.g. ``walk_unicycle``) or ``all``.
+    gait_root: master-grid root, overriding every built spec's own.
     idle_csv: qpos_idle.csv for the zero-twist stop clip, overriding the spec's own.
     no_convert: stage + print the selection only; skip the FK conversion (dry run).
+    no_stage: re-convert the clips already staged in ``<name>_library`` instead of
+      re-copying them from the master grids (e.g. after a converter change).
   """
   gr = Path(gait_root) if gait_root else None
   ic = Path(idle_csv) if idle_csv else None
@@ -273,7 +291,7 @@ def main(
       f"unknown controller '{controller}'. known: {sorted(LIBRARY_SPECS)} (or 'all')"
     )
   for nm in names:
-    build(LIBRARY_SPECS[nm], gr, ic, convert=not no_convert)
+    build(LIBRARY_SPECS[nm], gr, ic, convert=not no_convert, stage=not no_stage)
   print(f"\ndone: built {len(names)} librar{'y' if len(names) == 1 else 'ies'}.")
 
 

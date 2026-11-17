@@ -1,38 +1,16 @@
 """Convert an mj-nlp gait library into mjlab tracking-motion npz files.
 
-The library clips (e.g. ``trajectories/g1/library/crawl_diffdrive_library/*.npz``) store per-frame
-full MuJoCo state
-``state = [qpos(36) | qvel(35)]`` for the G1. mjlab's tracking ``MotionLoader`` instead expects
-per-body world kinematics (``joint_pos, joint_vel, body_pos_w, body_quat_w, body_lin_vel_w,
-body_ang_vel_w``). This script FK-replays each clip through the mjlab G1 scene to produce that
-schema, reusing csv_to_npz's finite-difference velocity recompute + FK logging, and writes one
-tracking npz per clip to disk (no Weights & Biases).
-
-Each source clip carries a ``twist`` field (``[vx, vy, wz]`` in m/s, m/s, rad/s) and an optional
-``nominal_speed``; both are copied into the tracking npz so the command can select clips by twist.
-
-Every gait clip is a closed periodic stride, and the blending command evaluates two clips at the
-SAME phase index when it transitions, so all clips of a library must agree on what phase 0 means.
-Mocap takes do not: each family's frame 0 is wherever its take started. ``align_phase`` (default
-on) therefore circularly shifts every converted clip so its foot-height profile lines up with a
-reference clip's, the straight clip nearest the middle of the forward-speed range. The shift is
-exact: the wrapped block is carried by the stride's own SE(2) displacement, and the result is
-re-based so frame 0 sits at the origin facing +x like every clip before it.
-
-If the input dir also contains ``qpos_idle.csv`` (one G1 qpos row), it is FK-replayed and written
-as a held, zero-velocity clip (``idle_out``, default ``crawl_fwd_vx_000.npz``) with twist
-``[0, 0, 0]`` so the policy has an explicit static pose to track when commanded to stop. It is
-optional -- absent, near-zero twist commands just snap to the slowest clip. Run once:
-
-  uv run python -m mjlab.scripts.library_to_npz
-
-``input_fps`` must be the clips' own rate: 200 Hz for the crawl grids (sim_dt 5 ms), 100 Hz for
-the upright walk grids (10 ms) -- ``build_library`` passes each spec's. Regenerate only if the
-env's control rate changes (``output_fps`` must equal ``1/step_dt`` = ``1/(decimation*timestep)``
-= 50 Hz for the tracking/crawling env).
+Each source clip is ONE periodic stride as ``state = [qpos(36) | qvel(35)]`` whose closing
+frame is frame 0 carried one stride on by an SE(2) map ``g``. The clip is resampled onto
+``round(T * output_fps)`` uniform frames, FK-replayed to per-body world kinematics, and
+written with ``twist`` and ``stride = [tx, ty, dpsi]`` (``g: p -> Rz(dpsi) p + t``), so
+it loops exactly. ``align_phase`` rolls every clip onto one reference clip's gait phase.
+An optional ``qpos_idle.csv`` becomes a held zero-twist clip.
+  uv run python -m mjlab.scripts.library_to_npz  # output_fps must equal 1 / step_dt
 """
 
 import glob
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -48,6 +26,7 @@ from mjlab.scripts.csv_to_npz import MotionLoader
 from mjlab.sim.sim import Simulation, SimulationCfg
 from mjlab.tasks.crawling_common.library import QPOS_JOINT_ORDER
 from mjlab.tasks.tracking.config.g1.env_cfgs import unitree_g1_flat_tracking_env_cfg
+from mjlab.utils.lab_api.math import axis_angle_from_quat, quat_conjugate, quat_mul
 
 _REPO_ROOT = Path(mjlab.MJLAB_SRC_PATH).parent.parent
 
@@ -128,6 +107,48 @@ def _yaw_transform(
     log[k][rows] = log[k][rows] @ R.T
 
 
+def _slerp(a: np.ndarray, b: np.ndarray, w: np.ndarray) -> np.ndarray:
+  """Batched slerp of wxyz quaternions ``(N, 4)`` at weights ``w`` ``(N, 1)``, falling
+  back to a normalized lerp where the two are too close for the sine form."""
+  b = np.where((a * b).sum(-1, keepdims=True) < 0.0, -b, b)
+  ang = np.arccos(np.clip((a * b).sum(-1, keepdims=True), -1.0, 1.0))
+  small = ang < 1e-6
+  sin = np.where(small, 1.0, np.sin(ang))
+  q = np.where(
+    small,
+    (1.0 - w) * a + w * b,
+    (np.sin((1.0 - w) * ang) * a + np.sin(w * ang) * b) / sin,
+  )
+  return q / np.linalg.norm(q, axis=-1, keepdims=True)
+
+
+def _stride_map(b0: np.ndarray, dxy: np.ndarray, dpsi: float) -> np.ndarray:
+  """``[tx, ty, dpsi]`` of the stride map ``g: p -> Rz(dpsi) p + t`` that carries the
+  frame-0 pelvis ``b0`` (xy) to ``b0 + dxy``."""
+  R = _rot_z(dpsi)[:2, :2]
+  return np.array([*(b0 + dxy - R @ b0), dpsi], dtype=np.float64)
+
+
+def _rebased_stride(stride: np.ndarray, yaw: float, t: np.ndarray) -> np.ndarray:
+  """The stride map after the whole clip is moved by ``A: p -> Rz(yaw) p + t``, i.e.
+  ``A g A^-1``."""
+  RA, Rg = _rot_z(yaw)[:2, :2], _rot_z(stride[2])[:2, :2]
+  return np.array([*(RA @ stride[:2] + t - Rg @ t), stride[2]], dtype=np.float64)
+
+
+def _seam_error(log: dict[str, Any], fps: float) -> tuple[float, float]:
+  """Worst gap [m/s] between the stored body velocities and a central difference of the
+  stored positions, at the two seam frames and over the interior. A wrong ``stride``
+  or a non-periodic velocity shows up as a seam gap far above the interior one."""
+  P = log["body_pos_w"].astype(np.float64)
+  V = log["body_lin_vel_w"].astype(np.float64)
+  tx, ty, dpsi = (float(v) for v in log["stride"])
+  R, t = _rot_z(dpsi), np.array([tx, ty, 0.0])
+  pad = np.concatenate([(P[-1:] - t) @ R, P, P[:1] @ R.T + t], axis=0)
+  err = np.linalg.norm(V - (pad[2:] - pad[:-2]) * fps / 2.0, axis=-1).max(axis=1)
+  return float(max(err[0], err[-1])), float(err[1:-1].max())
+
+
 def _circular_lag(profile: np.ndarray, ref: np.ndarray) -> int:
   """Shift ``s`` (frames, in (-T/2, T/2]) maximising the circular correlation of two (2, T)
   foot-height profiles: ``np.roll(profile, s, axis=1)`` lines up with ``ref``."""
@@ -197,7 +218,9 @@ def _align_phase(
     p0 = log["body_pos_w"][0, pelvis].astype(np.float64)
     yaw0 = _yaw_about_z(log["body_quat_w"][0, pelvis])
     R = _rot_z(-yaw0)
-    _yaw_transform(log, slice(0, n), -yaw0, -(R @ np.array([p0[0], p0[1], 0.0])))
+    t_rebase = -(R @ np.array([p0[0], p0[1], 0.0]))
+    _yaw_transform(log, slice(0, n), -yaw0, t_rebase)
+    log["stride"] = _rebased_stride(log["stride"], -yaw0, t_rebase[:2])
     for k in _LOG_KEYS:
       log[k] = log[k].astype(np.float32)
     # seam check: the pelvis must move as smoothly across the rolled seam as anywhere else
@@ -215,26 +238,61 @@ def _align_phase(
 
 
 class LibraryMotionLoader(MotionLoader):
-  """MotionLoader variant that sources base + joint states from a library ``[qpos|qvel]`` npz.
+  """MotionLoader that reads one periodic stride from a library ``[qpos|qvel]`` npz.
 
-  Overrides only ``_load_motion``: reads the ``state`` array (qpos[0:3]=base pos, qpos[3:7]=base
-  quat *already wxyz*, qpos[7:36]=29 joints) and discards the library qvel (the free-joint angular
-  qvel is body-local; the base class recomputes world-frame velocities by finite difference)."""
+  The stride is resampled onto ``round(T * output_fps)`` uniform frames (closing frame
+  excluded) and velocities are central differences that wrap through the stride map, so
+  the clip loops with no seam. A stride that is not a multiple of the output step is
+  time-stretched to the nearest one. The library qvel is discarded."""
 
   def _load_motion(self):
-    data = np.load(self.motion_file)
-    # Drop the closing frame (frame 0 one stride on): since #1202 the resampler keeps the end
-    # point, which would play that pose twice per loop (a 1.4 s walk at 50 Hz: 71 frames, not 70).
-    state = torch.from_numpy(np.asarray(data["state"][:-1], dtype=np.float32)).to(
-      self.device
+    self.state = np.asarray(np.load(self.motion_file)["state"], dtype=np.float64)
+    # The closing frame is frame 0 one stride on: its offset IS the stride map.
+    self.stride_dxy = self.state[-1, 0:2] - self.state[0, 0:2]
+    self.stride_dpsi = _yaw_about_z(self.state[-1, 3:7]) - _yaw_about_z(
+      self.state[0, 3:7]
     )
-    self.motion_base_poss_input = state[:, 0:3]
-    self.motion_base_rots_input = state[
-      :, 3:7
-    ]  # already wxyz -- no reorder (unlike the CSV path)
-    self.motion_dof_poss_input = state[:, 7:36]  # 29 actuated joints
-    self.input_frames = state.shape[0]
-    self.duration = (self.input_frames - 1) * self.input_dt
+    self.input_frames = self.state.shape[0]
+    self.duration = (self.input_frames - 1) * self.input_dt  # one full stride
+
+  def _interpolate_motion(self):
+    n = int(math.floor(self.duration * self.output_fps + 0.5))
+    # Source-frame coordinate of each output frame. float64 throughout: the base's
+    # float32 phase can land a frame early, and its slerp then returns the stale frame.
+    x = np.arange(n, dtype=np.float64) * (self.input_frames - 1) / n
+    lo = np.floor(x).astype(np.int64)
+    w = (x - lo)[:, None]
+    a, b = self.state[lo], self.state[lo + 1]
+    out = (1.0 - w) * a + w * b  # base position, joints
+    out[:, 3:7] = _slerp(a[:, 3:7], b[:, 3:7], w)  # base orientation, already wxyz
+    out = torch.from_numpy(out.astype(np.float32)).to(self.device)
+    self.output_frames = n
+    self.time_stretch = n * self.output_dt / self.duration
+    self.motion_base_poss = out[:, 0:3]
+    self.motion_base_rots = out[:, 3:7]
+    self.motion_dof_poss = out[:, 7:36]  # 29 actuated joints
+
+  def _compute_velocities(self):
+    """Central differences whose neighbours across the seam are the adjacent strides."""
+    pos, rot, dof = self.motion_base_poss, self.motion_base_rots, self.motion_dof_poss
+    two_dt = 2.0 * self.output_dt
+    R = torch.tensor(_rot_z(self.stride_dpsi), dtype=pos.dtype, device=pos.device)
+    d = torch.tensor([*self.stride_dxy, 0.0], dtype=pos.dtype, device=pos.device)
+    b0 = pos[0] * torch.tensor([1.0, 1.0, 0.0], dtype=pos.dtype, device=pos.device)
+    nxt = (pos[:1] - b0) @ R.T + b0 + d  # frame 0 of the next stride
+    prv = (pos[-1:] - b0 - d) @ R + b0  # last frame of the previous stride
+    pad = torch.cat([prv, pos, nxt], dim=0)
+    self.motion_base_lin_vels = (pad[2:] - pad[:-2]) / two_dt
+    half = 0.5 * self.stride_dpsi
+    qz = torch.tensor(
+      [[math.cos(half), 0.0, 0.0, math.sin(half)]], dtype=rot.dtype, device=rot.device
+    )
+    rpad = torch.cat(
+      [quat_mul(quat_conjugate(qz), rot[-1:]), rot, quat_mul(qz, rot[:1])], dim=0
+    )
+    rel = quat_mul(rpad[2:], quat_conjugate(rpad[:-2]))
+    self.motion_base_ang_vels = axis_angle_from_quat(rel) / two_dt
+    self.motion_dof_vels = (torch.roll(dof, -1, 0) - torch.roll(dof, 1, 0)) / two_dt
 
 
 def _replay_to_log(
@@ -351,6 +409,7 @@ def _idle_to_log(
     "body_lin_vel_w": np.zeros((num_frames, nb, 3), dtype=np.float32),
     "body_ang_vel_w": np.zeros((num_frames, nb, 3), dtype=np.float32),
     "twist": np.zeros(3, dtype=np.float32),  # [vx, vy, wz] = 0 -> the stop clip
+    "stride": np.zeros(3, dtype=np.float64),  # a held pose goes nowhere
     "nominal_speed": np.asarray(0.0, dtype=np.float32),
   }
 
@@ -432,25 +491,33 @@ def main(
     num_frames = log["joint_pos"].shape[0]
     name = os.path.basename(f)
     logs[name] = log
-    # the stride's own SE(2) displacement, from the source's closing frame (state[-1] = g(state[0]))
-    st = np.asarray(src["state"], dtype=np.float64)
-    strides[name] = (
-      st[-1, 0:2] - st[0, 0:2],
-      _yaw_about_z(st[-1, 3:7]) - _yaw_about_z(st[0, 3:7]),
+    strides[name] = (motion.stride_dxy, motion.stride_dpsi)
+    pelvis0 = log["body_pos_w"][0, robot.body_names.index("pelvis"), :2]
+    log["stride"] = _stride_map(pelvis0.astype(np.float64), *strides[name])
+    stretch = f", time-stretched x{motion.time_stretch:.4f}" * (
+      abs(motion.time_stretch - 1.0) > 1e-9
     )
-    print(
-      f"  {name} -> joint_pos {log['joint_pos'].shape}, body_pos_w {log['body_pos_w'].shape}"
-    )
+    print(f"  {name} -> {num_frames} frames{stretch}")
   if align_phase:
     body_names = list(robot.body_names)
     feet = [
       body_names.index(n) for n in ("left_ankle_roll_link", "right_ankle_roll_link")
     ]
     _align_phase(logs, strides, feet, body_names.index("pelvis"))
+  worst_seam, worst_interior = 0.0, 0.0
   for name, log in logs.items():
-    out_path = os.path.join(output_dir, name)
-    np.savez(out_path, **log)
-  print(f"  saved {len(logs)} clips to {output_dir}")
+    seam, interior = _seam_error(log, output_fps)
+    if seam > 3.0 * interior + 1e-3:
+      raise RuntimeError(
+        f"{name}: the clip does not loop -- body velocity is off by {seam:.3f} m/s at "
+        f"the seam vs {interior:.3f} m/s elsewhere"
+      )
+    worst_seam, worst_interior = max(worst_seam, seam), max(worst_interior, interior)
+    np.savez(os.path.join(output_dir, name), **log)
+  print(
+    f"  saved {len(logs)} clips to {output_dir}; velocity-vs-pose gap: seam "
+    f"{worst_seam:.3f} m/s, interior {worst_interior:.3f} m/s"
+  )
 
   # Optional static idle pose -> a held, zero-velocity zero-twist clip. Every clip in a library must
   # share the same frame count, so the idle is held for the gait clips' output length.

@@ -171,6 +171,9 @@ class LibrarySpec:
   every gait keeps its native period. Leave False for a single-period library: the build
   then fails on a mixed one."""
   idle: bool = True
+  align_phase: bool = True
+  """Roll every clip onto one reference clip's gait phase (``library_to_npz``). The
+  foot-height correlation it uses assumes an upright gait; the crawl specs turn it off."""
   gait_root: Path = (
     DEFAULT_GAIT_ROOT  # master grids: <gait_root>/gait_library_<family>/
   )
@@ -183,7 +186,7 @@ class LibrarySpec:
       raise ValueError(f"spec '{self.name}' needs exactly one of sources or merges")
     if self.merges:
       defaults = {f.name: f.default for f in fields(self)}
-      inert = ("gait_root", "input_fps", "idle_csv", "idle_name")
+      inert = ("gait_root", "input_fps", "idle_csv", "idle_name", "align_phase")
       changed = [k for k in inert if getattr(self, k) != defaults[k]]
       if changed:
         raise ValueError(
@@ -217,6 +220,7 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
       Source("crawl_turn_pos"),  # in-place left turns
       Source("crawl_turn_neg"),  # in-place right turns
     ),
+    align_phase=False,
   ),
   # Differential-drive crawl (tank): straight forward + backward columns + in-place turns.
   "diffdrive": LibrarySpec(
@@ -227,9 +231,10 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
       Source("crawl_turn_pos"),
       Source("crawl_turn_neg"),
     ),
+    align_phase=False,
   ),
   # UNICYCLE JOGGING: 2-D (vx, wz) arcs + vx = 0 pivots; every family at 10 ms on a 0.85 s stride
-  # (42.5 frames at 50 Hz -> 43 kept). `family` strings must match mj-nlp's gait_library_<family>.
+  # (42.5 frames at 50 Hz, stretched onto 43). `family` must match mj-nlp's gait_library_<family>.
   "jog_unicycle": LibrarySpec(
     name="jog_unicycle",
     sources=(
