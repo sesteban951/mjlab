@@ -8,6 +8,11 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
+- Added ``G1-JogRunSprint-Custom``, one unicycle policy over a merged jog + run +
+  sprint gait library (0.5 to 3.5 m/s) with the jog library's pivots.
+- Added ``run_fwd`` and ``sprint_fwd`` gait libraries and the ``phase_ref`` option
+  (``library_to_npz`` and ``LibrarySpec``) to align separately built libraries to one
+  foot phase.
 - Added ``GridPatternCfg.offset`` to shift the ray grid in frame-local XY.
 - ``GridPatternCfg.resolution`` accepts a per-axis ``(x, y)`` tuple.
 - Added a ``cu126`` extra (``uv sync --extra cu126``) that installs torch built for
