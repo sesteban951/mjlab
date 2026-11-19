@@ -250,6 +250,24 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     input_fps=100.0,  # every family's rate (sim_dt 10 ms)
     idle_name="jog_idle.npz",
   ),
+  # FORWARD RUNNING and SPRINTING: vx x wz arcs only (no backward, no pivots, no idle).
+  # Speed bands continue the jog grid: jog +0.5..+1.5, run +1.5..+2.5, sprint +2.5..+3.5
+  # (each meets the next on one shared vx node). Strides: run 0.74 s (37 frames at
+  # 50 Hz), sprint 0.63 s (31.5 frames, stretched onto 32).
+  "run_fwd": LibrarySpec(
+    name="run_fwd",
+    sources=(Source("run_fwd", keep={"vy": 0.0}),),
+    idle=False,
+    gait_root=PERIODIC_GAIT_ROOT,
+    input_fps=100.0,
+  ),
+  "sprint_fwd": LibrarySpec(
+    name="sprint_fwd",
+    sources=(Source("sprint_fwd", keep={"vy": 0.0}),),
+    idle=False,
+    gait_root=PERIODIC_GAIT_ROOT,
+    input_fps=100.0,
+  ),
   # UNICYCLE WALKING: the jog spec's shape on the walk grids. walk_fwd / walk_bck sweep BOTH vx
   # and wz (wz = 0 is the straight walk), so their filters keep only vy = 0; the pivot families
   # pin vx = 0. Unlike the jog, every family was solved at sim_dt = 10 ms (100 Hz) and shares the
