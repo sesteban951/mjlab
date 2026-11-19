@@ -57,11 +57,21 @@ BACKPACK_MATERIAL = "black"
 """g1.xml's material for the logo and head, rgba 0.2 0.2 0.2."""
 
 
-def add_backpack(spec: mujoco.MjSpec) -> mujoco.MjSpec:
+# Rear backpack (G1-JogRunSprint-Custom-Backpack): the same box, 5 % heavier and
+# mounted 5 cm further back, which leaves a 50 mm gap to the torso's logo plate.
+REAR_BACKPACK_MASS = 1.05 * BACKPACK_MASS
+REAR_BACKPACK_POS = (BACKPACK_POS[0] - 0.05, BACKPACK_POS[1], BACKPACK_POS[2])
+
+
+def add_backpack(
+  spec: mujoco.MjSpec,
+  mass: float = BACKPACK_MASS,
+  pos: tuple[float, float, float] = BACKPACK_POS,
+) -> mujoco.MjSpec:
   """Attach the backpack body to ``torso_link`` in ``spec`` and return ``spec``."""
   half = tuple(s / 2 for s in BACKPACK_SIZE)
   torso = spec.body(BACKPACK_PARENT_BODY_NAME)
-  body = torso.add_body(name=BACKPACK_BODY_NAME, pos=BACKPACK_POS)
+  body = torso.add_body(name=BACKPACK_BODY_NAME, pos=pos)
   body.add_geom(
     spec.find_default("visual"),
     name="backpack_visual",
@@ -75,7 +85,7 @@ def add_backpack(spec: mujoco.MjSpec) -> mujoco.MjSpec:
     name="backpack_collision",
     type=mujoco.mjtGeom.mjGEOM_BOX,
     size=half,
-    mass=BACKPACK_MASS,
+    mass=mass,
   )
   return spec
 
@@ -86,6 +96,10 @@ def get_backpack_spec() -> mujoco.MjSpec:
 
 def get_backpack_sphere_feet_spec() -> mujoco.MjSpec:
   return add_backpack(get_sphere_feet_spec())
+
+
+def get_rear_backpack_spec() -> mujoco.MjSpec:
+  return add_backpack(get_spec(), mass=REAR_BACKPACK_MASS, pos=REAR_BACKPACK_POS)
 
 
 ##
