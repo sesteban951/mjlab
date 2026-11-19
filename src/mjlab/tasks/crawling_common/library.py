@@ -43,6 +43,8 @@ PERIODIC_GAIT_ROOT = WALK_GAIT_ROOT
 # Standing idle for the jog library. The jog stop is the same static stand the walk library uses;
 # replace this csv if the jog task should rest in a different (e.g. ready-stance) pose.
 JOG_IDLE_CSV = _LIB_DIR / "jog_unicycle_library" / "qpos_idle.csv"
+# The jog library's own phase reference (straight, mid-speed); run and sprint align to it.
+JOG_PHASE_REF = _LIB_DIR / "jog_unicycle_tracking" / "jog_fwd_vx+1000_vy+000_wz+000.npz"
 # The unicycle WALK keeps its own copy of the same standing pose, so its staging folder is
 # self-contained like the jog's and a rebuild of one library never touches another's idle.
 WALK_UNICYCLE_IDLE_CSV = _LIB_DIR / "walk_unicycle_library" / "qpos_idle.csv"
@@ -174,6 +176,9 @@ class LibrarySpec:
   align_phase: bool = True
   """Roll every clip onto one reference clip's gait phase (``library_to_npz``). The
   foot-height correlation it uses assumes an upright gait; the crawl specs turn it off."""
+  phase_ref: Path | None = None
+  """A built tracking clip to align to instead of the in-library reference, so libraries
+  built separately (jog, run, sprint) share one phase origin and foot order."""
   gait_root: Path = (
     DEFAULT_GAIT_ROOT  # master grids: <gait_root>/gait_library_<family>/
   )
@@ -186,7 +191,14 @@ class LibrarySpec:
       raise ValueError(f"spec '{self.name}' needs exactly one of sources or merges")
     if self.merges:
       defaults = {f.name: f.default for f in fields(self)}
-      inert = ("gait_root", "input_fps", "idle_csv", "idle_name", "align_phase")
+      inert = (
+        "gait_root",
+        "input_fps",
+        "idle_csv",
+        "idle_name",
+        "align_phase",
+        "phase_ref",
+      )
       changed = [k for k in inert if getattr(self, k) != defaults[k]]
       if changed:
         raise ValueError(
@@ -250,14 +262,13 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     input_fps=100.0,  # every family's rate (sim_dt 10 ms)
     idle_name="jog_idle.npz",
   ),
-  # FORWARD RUNNING and SPRINTING: vx x wz arcs only (no backward, no pivots, no idle).
-  # Speed bands continue the jog grid: jog +0.5..+1.5, run +1.5..+2.5, sprint +2.5..+3.5
-  # (each meets the next on one shared vx node). Strides: run 0.74 s (37 frames at
-  # 50 Hz), sprint 0.63 s (31.5 frames, stretched onto 32).
+  # Forward run (0.74 s, 37 fr) and sprint (0.63 s, 32 fr) arcs, phase-aligned to the jog's
+  # reference clip so all three share one foot order. Build after jog_unicycle.
   "run_fwd": LibrarySpec(
     name="run_fwd",
     sources=(Source("run_fwd", keep={"vy": 0.0}),),
     idle=False,
+    phase_ref=JOG_PHASE_REF,
     gait_root=PERIODIC_GAIT_ROOT,
     input_fps=100.0,
   ),
@@ -265,6 +276,7 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     name="sprint_fwd",
     sources=(Source("sprint_fwd", keep={"vy": 0.0}),),
     idle=False,
+    phase_ref=JOG_PHASE_REF,
     gait_root=PERIODIC_GAIT_ROOT,
     input_fps=100.0,
   ),
@@ -325,6 +337,23 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
         bck_vx=(-1.10, -0.7315),
         pivot_wz=(1.4945, 2.10),
       ),
+    ),
+    ragged=True,
+  ),
+  # JOG + RUN + SPRINT, three strides in one library: the jog's arcs below 1.5 m/s plus its
+  # backward arcs, pivots and idle; run from 1.5 and sprint from 2.5 m/s (half-open bands).
+  "jogrunsprint": LibrarySpec(
+    name="jogrunsprint",
+    merges=(
+      MergeSource(
+        spec="jog_unicycle",
+        fwd_vx=(0.45, 1.5),
+        bck_vx=(-1.10, -0.45),
+        pivot_wz=(0.0, 2.10),
+        idle=True,
+      ),
+      MergeSource(spec="run_fwd", fwd_vx=(1.5, 2.5)),
+      MergeSource(spec="sprint_fwd", fwd_vx=(2.5, 3.60)),
     ),
     ragged=True,
   ),

@@ -182,20 +182,38 @@ def _phase_reference(logs: dict[str, dict[str, Any]]) -> str:
   )
 
 
+def _resample_periodic(profile: np.ndarray, n: int) -> np.ndarray:
+  """A ``(2, T)`` periodic profile linearly resampled onto ``n`` frames of the same cycle."""
+  t = profile.shape[1]
+  x = np.arange(n) * t / n
+  lo = np.floor(x).astype(int)
+  frac = x - lo
+  return profile[:, lo % t] * (1.0 - frac) + profile[:, (lo + 1) % t] * frac
+
+
 def _align_phase(
   logs: dict[str, dict[str, Any]],
   strides: dict[str, tuple[np.ndarray, float]],
   feet: list[int],
   pelvis: int,
+  ref_profile: np.ndarray | None = None,
 ) -> None:
   """Roll every clip so its foot-height profile lines up with the reference clip's (module
-  docstring). ``strides[name] = (dxy, dpsi)``, the clip's own per-stride SE(2) displacement."""
-  ref_name = _phase_reference(logs)
-  ref = _feet_profile(logs[ref_name], feet)
-  n = ref.shape[1]
-  print(f"  phase reference: {ref_name}")
+  docstring). ``strides[name] = (dxy, dpsi)``, the clip's own per-stride SE(2) displacement.
+
+  ``ref_profile`` (a ``(2, T)`` foot profile from another library) replaces the in-library
+  reference; it is resampled onto each clip's own length, so clips of any stride align to it.
+  """
+  if ref_profile is None:
+    ref_name = _phase_reference(logs)
+    ref_profile = _feet_profile(logs[ref_name], feet)
+    print(f"  phase reference: {ref_name}")
+  else:
+    print("  phase reference: external profile")
   worst = 0
   for name, log in logs.items():
+    n = log["body_pos_w"].shape[0]
+    ref = _resample_periodic(ref_profile, n)
     s = _circular_lag(_feet_profile(log, feet), ref)
     if s != 0:
       dxy, dpsi = strides[name]
@@ -204,9 +222,8 @@ def _align_phase(
       )  # pelvis at OLD frame 0
       for k in _LOG_KEYS:
         log[k] = np.roll(log[k], s, axis=0)
-      # np.roll(., s > 0) puts old frames T-s..T-1 FIRST: they belong to the previous stride, so
-      # move them back by the stride's inverse SE(2) map g^-1: p -> Rz(-dpsi)(p - b0 - d) + b0.
-      # s < 0 puts old frames 0..|s|-1 LAST: the next stride, g: p -> Rz(dpsi)(p - b0) + b0 + d.
+      # s > 0 brings old frames T-s..T-1 (previous stride) to the front: map back by g^-1.
+      # s < 0 sends old frames 0..|s|-1 (next stride) to the end: map forward by the stride g.
       d3 = np.array([dxy[0], dxy[1], 0.0])
       if s > 0:
         R = _rot_z(-dpsi)
@@ -234,7 +251,7 @@ def _align_phase(
     print(
       f"  {name}: phase shift {s:+d} frames ({100.0 * s / n:+.1f}%), residual {res:+d}"
     )
-  print(f"  phase-aligned {len(logs)} clips: worst residual lag {worst} of {n} frames")
+  print(f"  phase-aligned {len(logs)} clips: worst residual lag {worst} frames")
 
 
 class LibraryMotionLoader(MotionLoader):
@@ -434,21 +451,17 @@ def main(
   device: str = "cuda:0",
   idle_out: str = _IDLE_OUT,
   align_phase: bool = True,
+  phase_ref: str | None = None,
 ):
-  """Convert every ``*.npz`` in ``input_dir`` (mj-nlp ``[qpos|qvel]`` schema) to tracking npz.
-
-  An optional ``qpos_idle.csv`` (one G1 qpos row) is also written as a held speed-0 idle clip.
+  """Convert every ``*.npz`` in ``input_dir`` (mj-nlp ``[qpos|qvel]``) to tracking npz.
 
   Args:
-    input_dir: Folder of library clips (e.g.
-      ``trajectories/g1/library/crawl_ff_loop_180_R_001__A229_library``).
-    output_dir: Where to write the tracking-format clips (basename preserved).
-    input_fps: Sample rate of the library clips (200 Hz for the mj-nlp crawl grids, 100 Hz for
-      the upright walk grids).
-    output_fps: Output rate; MUST equal the env control rate 1/step_dt (50 Hz).
-    device: Torch/sim device.
-    idle_out: Filename of the converted idle clip (written into ``output_dir``).
-    align_phase: Roll every clip so all share the reference clip's gait phase (module docstring).
+    input_dir: Folder of mj-nlp clips; an optional ``qpos_idle.csv`` becomes a held idle clip.
+    output_dir: Where to write the tracking clips (basenames kept).
+    input_fps: Clip sample rate (200 Hz crawl grids, 100 Hz upright grids).
+    output_fps: Output rate; must equal the env control rate 1/step_dt (50 Hz).
+    align_phase: Roll every clip onto one reference clip's gait phase.
+    phase_ref: A built tracking clip to align to instead of the in-library reference.
   """
   if device.startswith("cuda") and not torch.cuda.is_available():
     print("[WARNING]: CUDA unavailable, falling back to CPU (slow).")
@@ -503,7 +516,10 @@ def main(
     feet = [
       body_names.index(n) for n in ("left_ankle_roll_link", "right_ankle_roll_link")
     ]
-    _align_phase(logs, strides, feet, body_names.index("pelvis"))
+    ref_profile = None
+    if phase_ref is not None:
+      ref_profile = _feet_profile(dict(np.load(phase_ref)), feet)
+    _align_phase(logs, strides, feet, body_names.index("pelvis"), ref_profile)
   worst_seam, worst_interior = 0.0, 0.0
   for name, log in logs.items():
     seam, interior = _seam_error(log, output_fps)

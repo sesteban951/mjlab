@@ -259,6 +259,7 @@ def _convert(spec: LibrarySpec) -> None:
     input_fps=spec.input_fps,
     idle_out=spec.idle_name,
     align_phase=spec.align_phase,
+    phase_ref=None if spec.phase_ref is None else str(spec.phase_ref),
   )
   _require_ok(spec)
 
