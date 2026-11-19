@@ -10,6 +10,8 @@ Added
 
 - Added ``G1-JogRunSprint-Custom``, one unicycle policy over a merged jog + run +
   sprint gait library (0.5 to 3.5 m/s) with the jog library's pivots.
+- Added ``G1-JogRunSprint-Custom-Backpack``, the same task on a G1 carrying the
+  compute backpack in a rear mounting (1.47 kg, 5 cm behind the torso shell).
 - Added ``run_fwd`` and ``sprint_fwd`` gait libraries and the ``phase_ref`` option
   (``library_to_npz`` and ``LibrarySpec``) to align separately built libraries to one
   foot phase.

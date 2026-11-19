@@ -25,6 +25,8 @@ uv run play G1-JogRunSprint-Custom --wandb-run-path <entity/project/run_id> \
 
 Play pins a straight 2.0 m/s run. To see the whole command range, use the viewer's twist controls.
 
+`G1-JogRunSprint-Custom-Backpack` is the same task on the robot carrying the compute backpack in a rear mounting: 1.47 kg (5% over the stock 1.4 kg backpack), with the box 5 cm further behind the torso. Train and play it with the same commands under that task name.
+
 ## The library
 
 | family | source | vx [m/s] | wz [rad/s] | stride | frames at 50 Hz | clips |
