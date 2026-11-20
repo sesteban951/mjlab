@@ -3,6 +3,7 @@
 import glob
 
 import numpy as np
+import pytest
 
 from mjlab.scripts.library_to_npz import _circular_lag, _resample_periodic
 from mjlab.tasks.crawling_common.library import LIBRARY_SPECS
@@ -31,10 +32,17 @@ def test_task_uses_merged_library():
   assert cmd.vx_fwd_range == (0.5, 3.5)
 
 
-def test_families_share_one_foot_phase():
-  d = LIBRARY_SPECS["jogrunsprint"].tracking_dir
+@pytest.mark.parametrize(
+  "library, families",
+  [
+    ("jogrunsprint", ("jog_fwd", "run_fwd", "sprint_fwd")),
+    ("walkjog_unicycle", ("jog_fwd", "walk_fwd")),
+  ],
+)
+def test_families_share_one_foot_phase(library, families):
+  d = LIBRARY_SPECS[library].tracking_dir
   peaks = {}
-  for fam in ("jog_fwd", "run_fwd", "sprint_fwd"):
+  for fam in families:
     f = glob.glob(str(d / f"{fam}_vx*_wz+000.npz"))[0]
     z = np.load(f)["body_pos_w"][:, [_LEFT_ANKLE, _RIGHT_ANKLE], 2]
     peaks[fam] = np.argmax(z, axis=0) / len(z)

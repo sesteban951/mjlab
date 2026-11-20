@@ -280,10 +280,8 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
     gait_root=PERIODIC_GAIT_ROOT,
     input_fps=100.0,
   ),
-  # UNICYCLE WALKING: the jog spec's shape on the walk grids. walk_fwd / walk_bck sweep BOTH vx
-  # and wz (wz = 0 is the straight walk), so their filters keep only vy = 0; the pivot families
-  # pin vx = 0. Unlike the jog, every family was solved at sim_dt = 10 ms (100 Hz) and shares the
-  # 1.4 s stride, so nothing is decimated. Same standing idle as the diff-drive walk.
+  # UNICYCLE WALKING: the jog spec's shape on the 1.4 s walk grids (100 Hz, no decimation),
+  # phase-aligned to the jog's reference clip so walk<->jog switches keep the foot order.
   "walk_unicycle": LibrarySpec(
     name="walk_unicycle",
     sources=(
@@ -292,6 +290,7 @@ LIBRARY_SPECS: dict[str, LibrarySpec] = {
       Source("walk_turn_pos", keep={"vx": 0.0, "vy": 0.0}),  # in-place left pivots
       Source("walk_turn_neg", keep={"vx": 0.0, "vy": 0.0}),  # in-place right pivots
     ),
+    phase_ref=JOG_PHASE_REF,
     gait_root=PERIODIC_GAIT_ROOT,
     idle_csv=WALK_UNICYCLE_IDLE_CSV,
     input_fps=100.0,

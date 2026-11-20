@@ -53,6 +53,9 @@ Added
 Changed
 ^^^^^^^
 
+- The ``walk_unicycle`` gait library is phase-aligned to the jog library, so
+  ``G1-WalkJog-Unicycle`` switches between walk and jog without swapping the stance
+  foot. ``G1-WalkJog-Unicycle`` uses a measured twist-reward width of 0.8 (was 0.6).
 - Heightfield terrains now lay hfield rows along y and columns along x, as MuJoCo
   expects. Non-square sub-terrains are no longer stretched with flat patches off the
   terrain; square ones are mirrored across x=y for a given seed.

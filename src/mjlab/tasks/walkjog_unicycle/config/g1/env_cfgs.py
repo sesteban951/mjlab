@@ -56,11 +56,9 @@ TWIST_METRIC_WEIGHTS = span_normalized_weights(
   (VX_BCK_RANGE[0], VX_FWD_RANGE[1]), (-WZ_RANGE[1], WZ_RANGE[1])
 )
 
-# Twist-reward width. The walk's own measured scatter wants 0.5 and the jog's 0.7 (see
-# those tasks); the merged library contains both, and one std has to serve. 0.6 is the
-# midpoint, NOT a measurement -- re-derive it from the per-clip RMS of [vx, vy, wz]
-# about each clip's mean if the twist term reads as pinned near 0 or 1 in training.
-TWIST_STD = 0.6
+# Per-clip twist RMS scatter (2026-11-20): walk 0.33-0.46, jog 0.34-0.53, walk pivots 0.61,
+# fast pivots 0.91. 0.8 keeps fast pivots at 0.27 of the term (0.6 gave 0.10).
+TWIST_STD = 0.8
 
 # Play: pin the walk's native straight gait so the reference ghost shows one clean clip.
 PLAY_VX_FWD = (0.75, 0.75)
