@@ -1,13 +1,9 @@
 """Unitree G1 unicycle walking with an LSTM actor: the base env, verbatim.
 
-``G1-Walk-Unicycle`` with memory moved from the observation into the network. Where
-``G1-Walk-Unicycle-History`` stacks the actor's dynamics terms over 5 frames (a fixed
-100 ms window into an MLP), this task feeds the LSTM in ``rl_cfg`` ONE frame per step
-and lets it keep its own state across the episode -- so the observation cfg must NOT
-stack history, or the two would be confounded. Everything else (library, command,
-rewards, DR, critic) is the base task's. See ``rl_cfg.py`` for the network sizing and
-its rationale.
-
+``G1-Walk-Unicycle`` with memory in the network instead of the observation: the LSTM
+in ``rl_cfg`` gets ONE frame per step and keeps its own state across the episode, so
+the observation cfg must NOT stack history. Everything else (library, command,
+rewards, DR, critic) is the base task's. See ``rl_cfg.py`` for the network sizing.
 """
 
 from mjlab.envs import ManagerBasedRlEnvCfg
