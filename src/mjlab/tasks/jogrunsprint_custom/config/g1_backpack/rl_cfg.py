@@ -1,4 +1,4 @@
-"""RL config for the Unitree G1 jog + run + sprint task on the rear-backpack robot."""
+"""RL config for the Unitree G1 jog + run + sprint task on the backpack robot."""
 
 from mjlab.rl import RslRlOnPolicyRunnerCfg
 from mjlab.tasks.jogrunsprint_custom.config.g1.rl_cfg import (

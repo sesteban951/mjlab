@@ -1,7 +1,7 @@
 """Unitree G1 unicycle walking with an LSTM actor, on the backpack robot.
 
 ``G1-Walk-Unicycle-LSTM`` with one change: the robot carries the compute backpack
-(``g1_constants_backpack``: a 1.4 kg box on the back of the torso). Only the entity's spec
+(``g1_constants_backpack``: a 1.5 kg box on the back of the torso). Only the entity's spec
 function moves; the mode-11 actuator table, action scale, HOME keyframe, collision policy,
 shared DR and every task term come through from the LSTM parent unchanged. The backpack's
 collision geom matches the ``.*_collision`` policy already on the entity, so it collides

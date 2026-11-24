@@ -1,7 +1,7 @@
 """Unitree G1 unicycle jogging with an LSTM actor, on the backpack robot.
 
 ``G1-Jog-Unicycle-LSTM`` with one change: the robot carries the compute backpack
-(``g1_constants_backpack``: a 1.4 kg box on the back of the torso), exactly as
+(``g1_constants_backpack``: a 1.5 kg box on the back of the torso), exactly as
 ``G1-Walk-Unicycle-LSTM-Backpack`` does for the walk. Only the entity's spec function
 moves; everything else comes through from the LSTM parent unchanged. The backpack's mass
 is NOT randomized: the shared DR's pseudo-inertia term is scoped to ``torso_link``.

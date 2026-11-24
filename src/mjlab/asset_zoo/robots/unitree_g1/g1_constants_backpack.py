@@ -1,23 +1,10 @@
 """Unitree G1 constants for the mode_machine 11 robot carrying a compute backpack.
 
-Child of :mod:`g1_constants_mode11`: the same ``g1.xml``, the same mode-11 actuator table and
-action scale, plus one body. The lab robot carries a computer in a backpack, modelled as a
-55 x 115 x 120 mm (x depth, y width, z height) box of 1.4 kg attached to ``torso_link``, flush
-against the back of the torso shell and centred on it. The mass sits on the collision geom and
-MuJoCo derives the inertia from that box at uniform density (the visual class has
-``density="0"``), so no hand-written ``<inertial>`` is needed and the inertial frame stays at
-the box centre.
-
-Two geoms, following g1.xml's split: ``backpack_visual`` (class ``visual``, the ``black``
-material of the logo and head) and ``backpack_collision`` (class ``collision``). The collision
-geom's name ends in ``_collision`` on purpose: every CollisionCfg in this package matches
-``.*_collision``, so the backpack collides like any other non-foot link (condim 1 under
-FULL_COLLISION, frictional under the contact-rich env's policy) and the ``pelvis``-subtree
-self-collision sensors see it. MuJoCo's parent filter keeps it from colliding with the torso.
-
-Use :func:`get_g1_backpack_robot_cfg` / :func:`get_g1_backpack_sphere_feet_robot_cfg` in place
-of the mode-11 getters and :data:`G1_BACKPACK_ACTION_SCALE` in place of
-``G1_MODE11_ACTION_SCALE``. Every other constant is mode 11's or the base one.
+Child of :mod:`g1_constants_mode11`: same ``g1.xml``, actuator table and action scale, plus
+one body on ``torso_link``: a 55 x 115 x 120 mm box of 1.5 kg, centred on the back of the
+torso and 23.5 mm behind its logo plate. The mass sits on the collision geom and MuJoCo
+derives the uniform-density box inertia from it. That geom is named ``backpack_collision``
+so every ``.*_collision`` CollisionCfg in this package picks it up.
 """
 
 import mujoco
@@ -41,37 +28,25 @@ from mjlab.entity import EntityCfg
 
 BACKPACK_BODY_NAME = "backpack_link"
 BACKPACK_PARENT_BODY_NAME = "torso_link"
-BACKPACK_MASS = 1.4
+BACKPACK_MASS = 1.5
 """Total mass of the box in kg, spread at uniform density."""
 BACKPACK_SIZE = (0.055, 0.115, 0.12)
 """Full extents (x depth, y width, z height) in metres."""
-BACKPACK_POS = (-0.0965, 0.0, 0.1775)
+BACKPACK_POS = (-0.12, 0.0, 0.1775)
 """Box centre in the ``torso_link`` frame.
 
-The torso shell's back face sits at x = -0.067 (the logo plate at -0.069) over z in
-[0.14, 0.26], so the box's front face at x = -0.069 touches the plate and the 55 mm depth
-extends back from it. The 120 mm height spans z in [0.1175, 0.2375]; the bottom edge
-overhangs where the shell curves forward but stays clear of it.
+The torso's logo plate sits at x = -0.069 over z in [0.14, 0.26], so the box's front face
+at x = -0.0925 leaves a 23.5 mm gap to it. The 120 mm height spans z in [0.1175, 0.2375].
 """
 BACKPACK_MATERIAL = "black"
 """g1.xml's material for the logo and head, rgba 0.2 0.2 0.2."""
 
 
-# Rear backpack (G1-JogRunSprint-Custom-Backpack): the same box, 5 % heavier and
-# mounted 5 cm further back, which leaves a 50 mm gap to the torso's logo plate.
-REAR_BACKPACK_MASS = 1.05 * BACKPACK_MASS
-REAR_BACKPACK_POS = (BACKPACK_POS[0] - 0.05, BACKPACK_POS[1], BACKPACK_POS[2])
-
-
-def add_backpack(
-  spec: mujoco.MjSpec,
-  mass: float = BACKPACK_MASS,
-  pos: tuple[float, float, float] = BACKPACK_POS,
-) -> mujoco.MjSpec:
+def add_backpack(spec: mujoco.MjSpec) -> mujoco.MjSpec:
   """Attach the backpack body to ``torso_link`` in ``spec`` and return ``spec``."""
   half = tuple(s / 2 for s in BACKPACK_SIZE)
   torso = spec.body(BACKPACK_PARENT_BODY_NAME)
-  body = torso.add_body(name=BACKPACK_BODY_NAME, pos=pos)
+  body = torso.add_body(name=BACKPACK_BODY_NAME, pos=BACKPACK_POS)
   body.add_geom(
     spec.find_default("visual"),
     name="backpack_visual",
@@ -85,7 +60,7 @@ def add_backpack(
     name="backpack_collision",
     type=mujoco.mjtGeom.mjGEOM_BOX,
     size=half,
-    mass=mass,
+    mass=BACKPACK_MASS,
   )
   return spec
 
@@ -96,10 +71,6 @@ def get_backpack_spec() -> mujoco.MjSpec:
 
 def get_backpack_sphere_feet_spec() -> mujoco.MjSpec:
   return add_backpack(get_sphere_feet_spec())
-
-
-def get_rear_backpack_spec() -> mujoco.MjSpec:
-  return add_backpack(get_spec(), mass=REAR_BACKPACK_MASS, pos=REAR_BACKPACK_POS)
 
 
 ##

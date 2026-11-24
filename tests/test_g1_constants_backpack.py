@@ -1,4 +1,4 @@
-"""Tests for g1_constants_backpack.py: mode 11 plus one 1.4 kg box on the back of the torso."""
+"""Tests for g1_constants_backpack.py: mode 11 plus one 1.5 kg box on the back of the torso."""
 
 import re
 
