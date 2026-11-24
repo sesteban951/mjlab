@@ -8,10 +8,12 @@ Upcoming version (not yet released)
 Added
 ^^^^^
 
-- Added ``G1-JogRunSprint-Custom``, one unicycle policy over a merged jog + run +
+- Added ``G1-JogRunSprint-Unicycle``, one unicycle policy over a merged jog + run +
   sprint gait library (0.5 to 3.5 m/s) with the jog library's pivots.
-- Added ``G1-JogRunSprint-Custom-Backpack``, the same task on a G1 carrying the
-  compute backpack in a rear mounting (1.47 kg, 5 cm behind the torso shell).
+- Added ``G1-JogRunSprint-Unicycle-Backpack``, the same task on a G1 carrying the
+  compute backpack.
+- Added ``G1-Walk-Unicycle-Backpack`` and ``G1-WalkJog-Unicycle-Backpack``, the
+  walk and walk + jog unicycle tasks on a G1 carrying the compute backpack.
 - Added ``run_fwd`` and ``sprint_fwd`` gait libraries and the ``phase_ref`` option
   (``library_to_npz`` and ``LibrarySpec``) to align separately built libraries to one
   foot phase.
@@ -53,6 +55,19 @@ Added
 Changed
 ^^^^^^^
 
+- Removed the ``G1-Crawling-Fwd``, ``G1-Crawling-Fwd-Blending``,
+  ``G1-Walk-Unicycle-SwingFoot`` and ``G1-Walk-Unicycle-History`` tasks.
+- The gait-library machinery moved out of the crawling packages into the
+  posture-agnostic ``mjlab.tasks.gait_library``: ``library`` (``LIBRARY_SPECS``),
+  ``runner`` (``LibraryTrackingOnPolicyRunner``), ``env_cfgs`` and ``mdp``
+  (``LibraryMotionCommand``, ``BlendingMotionCommand``, twist and phase
+  observations, egocentric root rewards). Imports from
+  ``mjlab.tasks.crawling_common.{library,runner,observations}``,
+  ``mjlab.tasks.crawling_fwd`` and ``mjlab.tasks.crawling_fwd_blending`` must be
+  updated. Behaviour of the remaining tasks is unchanged.
+- The G1 compute backpack (``g1_constants_backpack``) is now 1.5 kg and centred at
+  x = -0.12 m in the torso frame (was 1.4 kg at x = -0.0965 m). All G1 backpack
+  tasks use it.
 - The ``walk_unicycle`` gait library is phase-aligned to the jog library, so
   ``G1-WalkJog-Unicycle`` switches between walk and jog without swapping the stance
   foot. ``G1-WalkJog-Unicycle`` uses a measured twist-reward width of 0.8 (was 0.6).
