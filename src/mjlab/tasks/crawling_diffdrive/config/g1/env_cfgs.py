@@ -1,24 +1,20 @@
 """Unitree G1 DIFFERENTIAL-DRIVE crawling: tank-style twist command over the crawl gait library.
 
-Reuses ``G1-Crawling-Fwd-Blending``'s env config verbatim (contact-rich physics, action re-centered
-on the crawl pose, reference-free actor, blended clip transitions, idle-pose stop), then swaps the
-twist command for the differential-drive variant (translate XOR rotate, forward or backward) pointed
-at a library that mixes pure-forward, pure-backward and pure-turn clips + an idle clip.
+Builds on the shared crawl base (contact-rich physics, action centred on the crawl pose,
+reference-free actor, blended clip transitions, idle-pose stop), then swaps the twist command
+for the differential-drive variant (translate XOR rotate, forward or backward) over a library
+that mixes pure-forward, pure-backward and pure-turn clips plus an idle clip.
 """
 
 from dataclasses import fields
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.tasks.crawling_common.library import LIBRARY_SPECS
+from mjlab.tasks.crawling_common.env_cfgs import unitree_g1_crawling_env_cfg
 from mjlab.tasks.crawling_diffdrive.mdp.commands import DiffDriveMotionCommandCfg
-from mjlab.tasks.crawling_fwd_blending.config.g1.env_cfgs import (
-  unitree_g1_crawling_fwd_blending_env_cfg,
-)
+from mjlab.tasks.gait_library.library import LIBRARY_SPECS
 
-# Tracking-format library mixing pure-forward (vx>0), pure-backward (vx<0) and pure-turn (vx=vy=0)
-# clips -- all with vy=0, wz=0 for the straight ones -- plus a zero-twist idle clip, at the common
-# gait period. Selection lives in crawling_common.library.LIBRARY_SPECS["diffdrive"]; build/refresh
-# it with `python -m mjlab.scripts.build_library diffdrive`.
+# Straight forward, straight backward and in-place turn clips plus a zero-twist idle clip.
+# Rebuild with `uv run python -m mjlab.scripts.build_library diffdrive`.
 MOTION_DIR = str(LIBRARY_SPECS["diffdrive"].tracking_dir)
 
 # Straight-mode speed ranges [m/s]: forward (vx>0) and backward (vx<0). Turn-mode yaw-rate magnitude
@@ -36,16 +32,11 @@ PLAY_VX_FWD = (0.20, 0.20)
 
 def unitree_g1_crawling_diffdrive_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   """G1 differential-drive crawling config: translate(fwd/bck)-XOR-rotate command + blended transitions."""
-  cfg = unitree_g1_crawling_fwd_blending_env_cfg(play=play)
+  cfg = unitree_g1_crawling_env_cfg(MOTION_DIR, play=play)
 
-  # Re-wrap the (blending) command as the differential-drive command, carrying over every inherited
-  # field and adding the mode-split ranges.
+  # Re-wrap the blending command as the differential-drive one, keeping every field.
   old = cfg.commands["motion"]
   kwargs = {f.name: getattr(old, f.name) for f in fields(old)}
-  kwargs["motion_dir"] = MOTION_DIR
-  kwargs["motion_file"] = (
-    MOTION_DIR  # unused by the loader; tracking-task guard wants a path
-  )
   # twist_command_range is unused by the diffdrive sampler but kept sane for any base-class reads.
   kwargs["twist_command_range"] = (
     (VX_BCK_RANGE[0], VX_FWD_RANGE[1]),

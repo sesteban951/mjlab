@@ -16,20 +16,18 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from mjlab.tasks.crawling_fwd.mdp.commands import (
-  LibraryMotionCommand as FwdMotionCommand,
+from mjlab.tasks.gait_library.mdp.commands import (
+  LibraryMotionCommand,
+  LibraryMotionCommandCfg,
+  _phase_remap,
 )
-from mjlab.tasks.crawling_fwd.mdp.commands import (
-  LibraryMotionCommandCfg as FwdMotionCommandCfg,
-)
-from mjlab.tasks.crawling_fwd.mdp.commands import _phase_remap
 from mjlab.utils.lab_api.math import quat_box_minus
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
 
 
-class BlendingMotionCommand(FwdMotionCommand):
+class BlendingMotionCommand(LibraryMotionCommand):
   """Twist-indexed gait-library command that blends across clip transitions (see module docstring)."""
 
   cfg: BlendingMotionCommandCfg
@@ -210,7 +208,7 @@ class BlendingMotionCommand(FwdMotionCommand):
 
 
 @dataclass(kw_only=True)
-class BlendingMotionCommandCfg(FwdMotionCommandCfg):
+class BlendingMotionCommandCfg(LibraryMotionCommandCfg):
   """Config for :class:`BlendingMotionCommand`: adds the transition-blend window."""
 
   # Length of the reference blend on a mid-episode twist resample (seconds). Rounded to control

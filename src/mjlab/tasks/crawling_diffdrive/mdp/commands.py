@@ -1,19 +1,11 @@
 """Differential-drive twist command for the crawl gait library.
 
-Subclasses ``crawling_fwd_blending``'s :class:`BlendingMotionCommand` (so mid-episode clip switches
-still blend the reference) and overrides ONLY the twist sampler: instead of drawing all three axes
-independently, each env is assigned one of three mutually-exclusive modes on every resample --
-
-  * idle      (prob ``rel_static_envs``):  twist = [0,   0,  0 ]  -> snaps to the zero-twist stop clip
-  * turn      (prob ``rel_turn_envs``):     twist = [0,   0,  wz]  -> in-place rotation (wz signed)
-  * straight  (remaining probability):      twist = [vx,  0,  0 ]  -> drive forward (vx>0) or backward
-                                                                      (vx<0); ``rel_back_envs`` picks
-                                                                      the direction
-
-so the command is always a pure differential-drive input (translate XOR rotate, never a mixed arc,
-never lateral). Snapping to the nearest library clip is unchanged: forward and backward clips have
-wz=0 (and opposite-sign vx) while turn clips have vx=0, so a straight command lands on a straight
-clip of the right direction and a turn command on a turn clip under the same weighted-L2 metric.
+Subclasses the gait library's :class:`BlendingMotionCommand` and overrides only the twist
+sampler: on every resample each env is idle ``[0, 0, 0]`` (prob ``rel_static_envs``),
+turns in place ``[0, 0, wz]`` (prob ``rel_turn_envs``) or drives straight ``[vx, 0, 0]``,
+forward or backward per ``rel_back_envs``. Never a mixed arc, never lateral. The
+nearest-clip snap is unchanged: straight clips have wz = 0 and turn clips vx = 0, so a
+command lands on a clip of its own mode.
 """
 
 from __future__ import annotations
@@ -23,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from mjlab.tasks.crawling_fwd_blending.mdp.commands import (
+from mjlab.tasks.gait_library.mdp.blending import (
   BlendingMotionCommand,
   BlendingMotionCommandCfg,
 )

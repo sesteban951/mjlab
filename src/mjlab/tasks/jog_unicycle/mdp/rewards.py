@@ -1,6 +1,6 @@
 """Upright twist-tracking reward.
 
-The crawl ``twist_tracking`` (crawling_fwd/mdp/rewards.py) expresses the achieved planar pelvis
+The crawl ``twist_tracking`` (crawling_common/mdp/rewards.py) expresses the achieved planar
 twist in the robot's heading frame so the BODY-frame command ``[vx, vy, wz]`` is tracked whatever
 the absolute heading -- but it reads the heading off the pelvis body-Z axis, because prone the
 crawl's forward axis IS body-z. Standing up, body-z is vertical (its ground projection is ~0 and
@@ -18,7 +18,7 @@ import torch
 from mjlab.entity import Entity
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactSensor
-from mjlab.tasks.crawling_fwd.mdp.commands import LibraryMotionCommand
+from mjlab.tasks.gait_library.mdp.commands import LibraryMotionCommand
 from mjlab.utils.lab_api.math import quat_apply
 
 if TYPE_CHECKING:

@@ -22,7 +22,7 @@ import mjlab
 import mjlab.tasks  # noqa: F401  (populates the task registry)
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.scripts._cli import maybe_print_top_level_help
-from mjlab.tasks.crawling_fwd.mdp.commands import (
+from mjlab.tasks.gait_library.mdp.commands import (
   LibraryMotionCommand,
   LibraryMotionCommandCfg,
 )

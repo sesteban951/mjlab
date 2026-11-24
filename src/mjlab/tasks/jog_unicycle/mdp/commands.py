@@ -1,26 +1,11 @@
-"""Unicycle twist command for a jogging gait library.
+"""Unicycle twist command for an upright gait library.
 
-Subclasses ``crawling_fwd_blending``'s :class:`BlendingMotionCommand` (so mid-episode clip switches
-still blend the reference) and overrides ONLY the twist sampler. Where the differential-drive
-sampler is translate XOR rotate, a unicycle drives and turns AT THE SAME TIME -- each env is
-assigned one of three mutually-exclusive modes on every resample:
-
-  * idle  (prob ``rel_static_envs``):  twist = [0,  0, 0 ]  -> snaps to the zero-twist stop clip
-  * turn  (prob ``rel_turn_envs``):    twist = [0,  0, wz]  -> pure in-place pivot (wz signed)
-  * arc   (remaining probability):     twist = [vx, 0, wz]  -> jog forward (vx>0) or backward
-                                                               (vx<0) WHILE turning
-
-``arc_wz_range`` reaches down to 0, so a straight jog is the ``wz -> 0`` end of the arc mode rather
-than a fourth mode; there is no separate "straight" case to keep in sync. Lateral motion is still
-never commanded (``vy`` is always 0) -- that is what makes this a unicycle and not a free twist.
-
-WHY THE METRIC WEIGHTS MATTER HERE AND NOT IN THE DIFF-DRIVE. Snapping picks the library clip
-minimising ``sum_i w_i (twist_i - clip_i)^2``. The diff-drive library is 1-D within a mode (straight
-clips have wz=0, turn clips have vx=0), so the axes never compete and equal weights are fine. A
-unicycle library is a genuine 2-D (vx, wz) grid: every candidate differs on both axes at once, and
-the weights decide whether 1 m/s of speed error is worth more or less than 1 rad/s of yaw error --
-two different units. :func:`span_normalized_weights` makes that choice explicit and range-derived
-instead of leaving it to an accident of units.
+Subclasses the gait library's :class:`BlendingMotionCommand` and overrides only the twist
+sampler: on every resample each env is idle ``[0, 0, 0]`` (prob ``rel_static_envs``),
+pivots in place ``[0, 0, wz]`` (prob ``rel_turn_envs``) or arcs ``[vx, 0, wz]``, driving
+and turning at once. ``arc_wz_range`` reaches 0, so a straight gait is the arc's edge.
+Lateral motion is never commanded. The library is a 2-D (vx, wz) grid, so the nearest-clip
+weights trade speed error against yaw error: see :func:`span_normalized_weights`.
 """
 
 from __future__ import annotations
@@ -30,7 +15,7 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from mjlab.tasks.crawling_fwd_blending.mdp.commands import (
+from mjlab.tasks.gait_library.mdp.blending import (
   BlendingMotionCommand,
   BlendingMotionCommandCfg,
 )

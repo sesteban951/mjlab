@@ -14,8 +14,12 @@ from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.sensor import ContactMatch, ContactSensorCfg
-from mjlab.tasks.crawling_common.library import LIBRARY_SPECS, load_idle_qpos
-from mjlab.tasks.crawling_common.observations import make_actor_reference_free
+from mjlab.tasks.gait_library.env_cfgs import (
+  library_command_fields,
+  make_actor_reference_free,
+  use_egocentric_root_rewards,
+)
+from mjlab.tasks.gait_library.library import LIBRARY_SPECS, load_idle_qpos
 from mjlab.tasks.jog_unicycle import mdp
 from mjlab.tasks.jog_unicycle.mdp.commands import (
   UnicycleMotionCommandCfg,
@@ -109,24 +113,8 @@ def unitree_g1_jog_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
   old = cfg.commands["motion"]
   assert isinstance(old, MotionCommandCfg)
   cfg.commands["motion"] = UnicycleMotionCommandCfg(
-    entity_name=old.entity_name,
+    **library_command_fields(old, MOTION_DIR),
     resampling_time_range=RESAMPLING_TIME_RANGE,
-    debug_vis=old.debug_vis,
-    pose_range=old.pose_range,
-    velocity_range=old.velocity_range,
-    joint_position_range=old.joint_position_range,
-    adaptive_kernel_size=old.adaptive_kernel_size,
-    adaptive_lambda=old.adaptive_lambda,
-    adaptive_uniform_ratio=old.adaptive_uniform_ratio,
-    adaptive_alpha=old.adaptive_alpha,
-    sampling_mode=old.sampling_mode,
-    anchor_body_name=old.anchor_body_name,
-    body_names=old.body_names,
-    viz=old.viz,
-    motion_dir=MOTION_DIR,
-    # motion_file is unused by the library loader, but train/play's tracking-task guard
-    # (isinstance MotionCommandCfg) requires an existing path -> point it at the motion dir.
-    motion_file=MOTION_DIR,
     # Unused by the unicycle sampler; kept sane for any base-class reads. The full commanded box.
     twist_command_range=(
       (VX_BCK_RANGE[0], VX_FWD_RANGE[1]),
@@ -144,8 +132,8 @@ def unitree_g1_jog_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     rel_back_envs=(0.0 if play else REL_BACK_ENVS),
   )
 
-  # --- reference-free actor: commanded twist + phase in both groups, reference terms stripped
-  # from the actor, projected gravity restored in their place (see crawling_common.observations).
+  # --- reference-free actor: twist + phase in both groups, reference terms off the actor,
+  # projected gravity restored in their place (see gait_library.env_cfgs).
   make_actor_reference_free(cfg)
 
   # --- feet-vs-ground contact sensor: what the foot-slip and soft-landing terms read. Same
@@ -173,23 +161,9 @@ def unitree_g1_jog_unicycle_env_cfg(play: bool = False) -> ManagerBasedRlEnvCfg:
     params={"command_name": "motion", "std": TWIST_STD},
   )
 
-  # --- position cost: egocentric path target instead of the clip's ABSOLUTE anchor position. A
-  # looping clip's position is a sawtooth, so tracking it punishes net progress; the egocentric
-  # target advances with the reference velocity and re-bases to the robot on resample.
-  cfg.rewards["motion_global_root_pos"] = RewardTermCfg(
-    func=mdp.egocentric_anchor_position_error_exp,
-    weight=0.5,
-    params={"command_name": "motion", "std": 0.3},
-  )
-
-  # --- orientation cost: the same fix for HEADING. An arcing clip's absolute yaw wraps back every
-  # stride; the egocentric heading target accumulates the reference yaw rate instead, so net
-  # turning is rewarded while uprightness is still tracked.
-  cfg.rewards["motion_global_root_ori"] = RewardTermCfg(
-    func=mdp.egocentric_anchor_orientation_error_exp,
-    weight=0.5,
-    params={"command_name": "motion", "std": 0.4},
-  )
+  # --- root pose: track the unrolled reference, not the clip's absolute (sawtooth) pose,
+  # so net progress and net turning are not punished.
+  use_egocentric_root_rewards(cfg)
 
   # --- stomping mitigation (hardware): foot xy speed in contact and touchdown force, only while a
   # nonzero twist is commanded (the velocity task's terms, gated; see jog_unicycle.mdp.rewards).

@@ -10,7 +10,7 @@ from rsl_rl.utils import WandbLogWriter
 from mjlab.rl import RslRlVecEnvWrapper
 from mjlab.rl.exporter_utils import attach_metadata_to_onnx, get_base_metadata
 from mjlab.rl.runner import MjlabOnPolicyRunner
-from mjlab.tasks.crawling_fwd.mdp.commands import LibraryMotionCommand
+from mjlab.tasks.gait_library.mdp.commands import LibraryMotionCommand
 
 
 class LibraryTrackingOnPolicyRunner(MjlabOnPolicyRunner):

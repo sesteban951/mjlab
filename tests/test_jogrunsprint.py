@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from mjlab.scripts.library_to_npz import _circular_lag, _resample_periodic
-from mjlab.tasks.crawling_common.library import LIBRARY_SPECS
+from mjlab.tasks.gait_library.library import LIBRARY_SPECS
 from mjlab.tasks.jog_unicycle.mdp.commands import UnicycleMotionCommandCfg
 from mjlab.tasks.registry import load_env_cfg
 
@@ -26,7 +26,7 @@ def test_external_reference_aligns_clips_of_another_length():
 
 
 def test_task_uses_merged_library():
-  cmd = load_env_cfg("G1-JogRunSprint-Custom").commands["motion"]
+  cmd = load_env_cfg("G1-JogRunSprint-Unicycle").commands["motion"]
   assert isinstance(cmd, UnicycleMotionCommandCfg)
   assert cmd.motion_dir == str(LIBRARY_SPECS["jogrunsprint"].tracking_dir)
   assert cmd.vx_fwd_range == (0.5, 3.5)

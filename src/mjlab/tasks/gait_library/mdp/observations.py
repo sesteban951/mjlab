@@ -1,4 +1,4 @@
-"""Crawling-specific observation terms: the commanded twist and a phase clock."""
+"""Gait-library observation terms: the commanded twist and a phase clock."""
 
 from __future__ import annotations
 

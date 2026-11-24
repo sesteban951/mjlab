@@ -10,17 +10,15 @@ lives in the library command."""
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.tasks.crawling_common.library import LIBRARY_SPECS
+from mjlab.tasks.gait_library.library import LIBRARY_SPECS
 from mjlab.tasks.jog_unicycle.config.g1.env_cfgs import unitree_g1_jog_unicycle_env_cfg
 from mjlab.tasks.jog_unicycle.mdp.commands import (
   UnicycleMotionCommandCfg,
   span_normalized_weights,
 )
 
-# The merged library (walk clips T = 70 frames, jog clips T = 43). Selection and the
-# twist cut between the families live in
-# crawling_common.library.LIBRARY_SPECS["walkjog_unicycle"]; rebuild with `uv run python
-# -m mjlab.scripts.build_library walkjog_unicycle`.
+# The merged library (walk clips T = 70 frames, jog clips T = 43), cut per its spec.
+# Rebuild with `uv run python -m mjlab.scripts.build_library walkjog_unicycle`.
 SPEC = LIBRARY_SPECS["walkjog_unicycle"]
 MOTION_DIR = str(SPEC.tracking_dir)
 

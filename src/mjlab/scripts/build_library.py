@@ -20,7 +20,7 @@ import numpy as np
 import tyro
 
 import mjlab
-from mjlab.tasks.crawling_common.library import (
+from mjlab.tasks.gait_library.library import (
   LIBRARY_SPECS,
   LibrarySpec,
   MergeSource,

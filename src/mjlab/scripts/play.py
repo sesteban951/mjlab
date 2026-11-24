@@ -16,7 +16,7 @@ from mjlab.envs import ManagerBasedRlEnv
 from mjlab.rl import MjlabOnPolicyRunner, RslRlVecEnvWrapper
 from mjlab.rl.recurrent import wrap_for_inference
 from mjlab.scripts._cli import maybe_print_top_level_help
-from mjlab.tasks.crawling_fwd.mdp.commands import (
+from mjlab.tasks.gait_library.mdp.commands import (
   LibraryMotionCommand,
   LibraryMotionCommandCfg,
 )

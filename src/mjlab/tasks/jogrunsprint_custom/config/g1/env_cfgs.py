@@ -9,7 +9,7 @@ jog_unicycle, run_fwd, sprint_fwd). Design notes: ../../README.md.
 from dataclasses import replace
 
 from mjlab.envs import ManagerBasedRlEnvCfg
-from mjlab.tasks.crawling_common.library import LIBRARY_SPECS
+from mjlab.tasks.gait_library.library import LIBRARY_SPECS
 from mjlab.tasks.jog_unicycle.config.g1.env_cfgs import unitree_g1_jog_unicycle_env_cfg
 from mjlab.tasks.jog_unicycle.mdp.commands import (
   UnicycleMotionCommandCfg,

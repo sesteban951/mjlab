@@ -7,8 +7,8 @@ import pytest
 import torch
 
 from mjlab.scripts.build_library import _merge_keep, _verify
-from mjlab.tasks.crawling_common.library import LibrarySpec, MergeSource, Source
-from mjlab.tasks.crawling_fwd.mdp.commands import (
+from mjlab.tasks.gait_library.library import LibrarySpec, MergeSource, Source
+from mjlab.tasks.gait_library.mdp.commands import (
   LibraryMotionLoader,
   _fit_frame_to_clip,
   _phase_remap,

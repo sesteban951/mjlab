@@ -1,18 +1,27 @@
-"""Shared observation surgery for the twist-conditioned gait-library envs.
+"""Config surgery shared by the twist-conditioned gait-library envs.
 
-Every library controller (crawl, walk, jog) turns the inherited tracking observations into a
-REFERENCE-FREE actor the same way, so the recipe lives here once rather than in each env cfg.
-See :func:`make_actor_reference_free`.
+Every library task starts from a built tracking env cfg and applies the same steps, so
+each lives here once: carry the single-clip command over to a library command
+(:func:`library_command_fields`), make the actor reference-free
+(:func:`make_actor_reference_free`) and track the unrolled root
+(:func:`use_egocentric_root_rewards`).
 """
 
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 
 from mjlab.envs import ManagerBasedRlEnvCfg
 from mjlab.envs.mdp.observations import projected_gravity
 from mjlab.managers.observation_manager import ObservationTermCfg
-from mjlab.tasks.crawling_fwd.mdp.observations import commanded_twist, motion_phase
+from mjlab.managers.reward_manager import RewardTermCfg
+from mjlab.tasks.gait_library.mdp.observations import commanded_twist, motion_phase
+from mjlab.tasks.gait_library.mdp.rewards import (
+  egocentric_anchor_orientation_error_exp,
+  egocentric_anchor_position_error_exp,
+)
+from mjlab.tasks.tracking.mdp.commands import MotionCommandCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 
 # Reference terms the actor must not see. ``command`` is the full reference command vector and
@@ -68,4 +77,50 @@ def make_actor_reference_free(
 
   cfg.observations["actor"].terms["projected_gravity"] = ObservationTermCfg(
     func=projected_gravity, noise=Unoise(n_min=-gravity_noise, n_max=gravity_noise)
+  )
+
+
+def library_command_fields(old: MotionCommandCfg, motion_dir: str) -> dict[str, Any]:
+  """Keyword arguments carrying a built ``MotionCommandCfg`` over to a library command.
+
+  ``motion_file`` is unused by the library loader, but train and play require an
+  existing path on every tracking task, so it points at the motion dir.
+  """
+  return {
+    "entity_name": old.entity_name,
+    "debug_vis": old.debug_vis,
+    "pose_range": old.pose_range,
+    "velocity_range": old.velocity_range,
+    "joint_position_range": old.joint_position_range,
+    "adaptive_kernel_size": old.adaptive_kernel_size,
+    "adaptive_lambda": old.adaptive_lambda,
+    "adaptive_uniform_ratio": old.adaptive_uniform_ratio,
+    "adaptive_alpha": old.adaptive_alpha,
+    "sampling_mode": old.sampling_mode,
+    "anchor_body_name": old.anchor_body_name,
+    "body_names": old.body_names,
+    "viz": old.viz,
+    "motion_dir": motion_dir,
+    "motion_file": motion_dir,
+  }
+
+
+def use_egocentric_root_rewards(
+  cfg: ManagerBasedRlEnvCfg, command_name: str = "motion"
+) -> None:
+  """Swap the absolute root position and orientation rewards for egocentric ones.
+
+  A looping clip's absolute root pose is a sawtooth, so tracking it punishes net
+  progress and net turning; the egocentric targets follow the unrolled reference.
+  The base terms' weights and stds are kept.
+  """
+  cfg.rewards["motion_global_root_pos"] = RewardTermCfg(
+    func=egocentric_anchor_position_error_exp,
+    weight=0.5,
+    params={"command_name": command_name, "std": 0.3},
+  )
+  cfg.rewards["motion_global_root_ori"] = RewardTermCfg(
+    func=egocentric_anchor_orientation_error_exp,
+    weight=0.5,
+    params={"command_name": command_name, "std": 0.4},
   )

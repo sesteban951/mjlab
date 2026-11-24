@@ -272,7 +272,7 @@ These options apply to both the motion tracking and velocity playback commands a
 - `--device` overrides the compute device (e.g. `cpu`, `cuda:0`).
 
 ## Contact-Rich Locomotion
-Contact-rich locomotion (e.g. crawling) tracks a *library* of periodic clips — one per forward speed — instead of a single motion, and a commanded speed selects the nearest clip at runtime (see `G1-Crawling-NoStopping`).
+Contact-rich locomotion (e.g. crawling) tracks a *library* of periodic clips — one per forward speed — instead of a single motion, and a commanded speed selects the nearest clip at runtime (see the crawling environments below).
 
 ### Parse the Gait Library
 The library ships as raw solver output: one `.npz` per speed storing per-frame full MuJoCo state `[qpos | qvel]`, named so the speed is parsable from the filename (`crawl_vp0_280` → +0.28 m/s). Convert the whole folder into the tracking-format npz the crawling task loads:
@@ -315,7 +315,7 @@ Libraries are built in two layers:
 2. **Per-controller tracking libraries** — what an env actually loads: a curated subset of the
    master grids, converted to tracking-format npz (per-body world kinematics). Each controller
    declares its selection once, in the central registry
-   `src/mjlab/tasks/crawling_common/library.py`:
+   `src/mjlab/tasks/gait_library/library.py`:
 
 ```python
 LIBRARY_SPECS = {
@@ -361,20 +361,17 @@ the console script.)
 
 | Task ID | Command space | Library |
 |---|---|---|
-| `G1-Crawling-Fwd` | forward speed `[vx, 0, 0]` + idle stop | 1-D forward vx sweep (`crawl_ff_loop_..._tracking`) |
-| `G1-Crawling-Fwd-Blending` | same as Fwd, with blended clip transitions | same |
 | `G1-Crawling-Omni` | full 3-D twist `[vx, vy, wz]` (forward grid) | `crawl_omni_tracking` |
 | `G1-Crawling-DiffDrive` | differential drive: `[±vx, 0, 0]` **or** `[0, 0, ±wz]` | `crawl_diffdrive_tracking` |
 
-- **`G1-Crawling-Fwd`** — the base twist-library crawler: forward speed only, plus a static idle
-  stop. Uses the original 1-D vx library (built with the manual `library_to_npz` flow above; predates
-  the `LIBRARY_SPECS` registry).
-- **`G1-Crawling-Fwd-Blending`** — identical to Fwd, but on a mid-episode twist resample it
-  interpolates the reference from the outgoing clip to the incoming clip over a short window, so the
-  imitation target is a smooth accel/decel rather than a teleport. The commanded-twist observation
-  still steps at the resample, so the policy learns an intrinsic graceful transition.
+Both share one base env (`src/mjlab/tasks/crawling_common/env_cfgs.py`) and the posture-agnostic
+gait-library machinery in `src/mjlab/tasks/gait_library/` (library command, blended clip switches,
+reference-free actor, ONNX runner), which the walk, jog and sprint tasks use too. On a mid-episode
+twist resample the reference is interpolated from the outgoing clip to the incoming one over a
+short window, while the commanded-twist observation steps at once.
+
 - **`G1-Crawling-Omni`** — opens all three twist axes: forward crawling with lateral and yaw-rate
-  steering, over the full 3-D forward grid. Inherits Blending's transitions.
+  steering, over the full 3-D forward grid.
 - **`G1-Crawling-DiffDrive`** — a tank / differential-drive command: each env either drives
   **straight** (forward or backward) **or** turns **in place**, never a blended arc and never
   lateral. The library mixes the pure-forward and pure-backward speed columns with the in-place turn

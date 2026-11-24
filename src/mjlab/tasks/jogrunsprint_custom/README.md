@@ -1,4 +1,4 @@
-# G1-JogRunSprint-Custom
+# G1-JogRunSprint-Unicycle
 
 One reference-free PPO policy for fast locomotion on the Unitree G1. It covers jog, run and sprint, plus the jog library's backward arcs, fast in-place pivots and standing idle. It is built the same way as `G1-WalkJog-Unicycle`: a merged "ragged" library, where every clip loops at its own stride length, and the jog task's environment pointed at it.
 
@@ -14,18 +14,18 @@ uv run python -m mjlab.scripts.build_library sprint_fwd
 uv run python -m mjlab.scripts.build_library jogrunsprint
 
 # Train
-uv run train G1-JogRunSprint-Custom --env.scene.num-envs 4096 \
+uv run train G1-JogRunSprint-Unicycle --env.scene.num-envs 4096 \
   --agent.run-name jogrunsprint_v0 --agent.max-iterations 30001 \
   --video True --video-iter-interval 500
 
 # Play (library tasks need --motion-file pointed at the library)
-uv run play G1-JogRunSprint-Custom --wandb-run-path <entity/project/run_id> \
+uv run play G1-JogRunSprint-Unicycle --wandb-run-path <entity/project/run_id> \
   --motion-file trajectories/g1/library/jogrunsprint_tracking
 ```
 
 Play pins a straight 2.0 m/s run. To see the whole command range, use the viewer's twist controls.
 
-`G1-JogRunSprint-Custom-Backpack` is the same task on the robot carrying the compute backpack in a rear mounting: 1.47 kg (5% over the stock 1.4 kg backpack), with the box 5 cm further behind the torso. Train and play it with the same commands under that task name.
+`G1-JogRunSprint-Unicycle-Backpack` is the same task on the robot carrying the compute backpack: a 1.5 kg box centred 12 cm behind the torso frame, the same one the walk and jog LSTM backpack tasks use. Train and play it with the same commands under that task name.
 
 ## The library
 
@@ -38,7 +38,7 @@ Play pins a straight 2.0 m/s run. To see the whole command range, use the viewer
 | run | `run_fwd` | 1.5 – 2.4 | ±0.5 | 0.74 s | 37 | 110 |
 | sprint | `sprint_fwd` | 2.5 – 3.5 | ±0.5 | 0.63 s | 32 | 121 |
 
-The source grids (`jog_fwd`, `run_fwd`, `sprint_fwd`) each share a vx column with their neighbour, at 1.5 and 2.5 m/s. The merge uses half-open bands, so each shared column goes to the faster family. The spec is `LIBRARY_SPECS["jogrunsprint"]` in `crawling_common/library.py`. The sprint stride is 31.5 frames at 50 Hz, so the converter stretches it onto 32 frames, and sprint clips play about 1.6% slower than their labels.
+The source grids (`jog_fwd`, `run_fwd`, `sprint_fwd`) each share a vx column with their neighbour, at 1.5 and 2.5 m/s. The merge uses half-open bands, so each shared column goes to the faster family. The spec is `LIBRARY_SPECS["jogrunsprint"]` in `gait_library/library.py`. The sprint stride is 31.5 frames at 50 Hz, so the converter stretches it onto 32 frames, and sprint clips play about 1.6% slower than their labels.
 
 ## What the minimum version does
 
@@ -92,7 +92,7 @@ See `research/literature_review.md`, sections 1–2.
 ### What to watch, and what to add next
 
 - **Collapse to standing, or no progress at run/sprint speeds:** add **step 4**, the curriculum. Uniform sampling over a wide speed range caused exactly this "jitter in place" failure in Rapid Locomotion, and in this repo's own velocity tasks.
-- **Falls or tracking spikes right after band switches** (check with play, commanding 1.2↔1.8 and 2.2↔2.8 m/s): add **step 5**. Then add **steps 6–7**; both are local to `crawling_fwd_blending/mdp/commands.py` and the phase observation.
+- **Falls or tracking spikes right after band switches** (check with play, commanding 1.2↔1.8 and 2.2↔2.8 m/s): add **step 5**. Then add **steps 6–7**; both are local to `gait_library/mdp/blending.py` and the phase observation.
 - **Rough jog↔pivot switches:** the pivots' feet are not half a stride apart (left/right swing peaks at 0.42/0.74 for left turns and 0.25/0.92 for right turns), and left and right turns are not mirror images. No roll lines them up exactly with the jog. Consider **step 10**, or regenerating or mirroring the pivots.
 - **Good in simulation but too fast to be believable:** the G1 actuators clip torque at a flat limit, with no torque–speed derating, and the hip and knee motors' ~20 rad/s limits are never enforced. See **step 11** before trusting sprint results on hardware.
 

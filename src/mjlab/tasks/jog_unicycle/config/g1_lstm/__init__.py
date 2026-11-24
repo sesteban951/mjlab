@@ -1,4 +1,4 @@
-from mjlab.tasks.crawling_common.runner import LibraryTrackingOnPolicyRunner
+from mjlab.tasks.gait_library.runner import LibraryTrackingOnPolicyRunner
 from mjlab.tasks.registry import register_mjlab_task
 
 from .env_cfgs import unitree_g1_jog_unicycle_lstm_env_cfg

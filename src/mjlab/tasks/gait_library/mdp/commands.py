@@ -249,7 +249,7 @@ class LibraryMotionCommand(MotionCommand):
     if cfg.rel_static_envs > 0.0:
       assert self._idle_clip_idx is not None, (
         "rel_static_envs > 0 requires a zero-twist idle clip in motion_dir "
-        f"(e.g. crawl_fwd_vx_000.npz); found twists {self.motion.lib_twists.tolist()}"
+        f"(build it with an idle csv); found twists {self.motion.lib_twists.tolist()}"
       )
 
     self.time_steps = torch.zeros(self.num_envs, dtype=torch.long, device=self.device)

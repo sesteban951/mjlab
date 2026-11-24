@@ -1,31 +1,19 @@
-from mjlab.envs.mdp import *  # noqa: F401, F403
+# The posture-agnostic library MDP: command base, twist/phase observations, root rewards.
+from mjlab.tasks.gait_library.mdp import *  # noqa: F401, F403
 
-# The library command base, the twist/phase observations and the egocentric path/heading rewards
-# are the crawl ones verbatim: none of them assumes a posture or a gait.
-from mjlab.tasks.crawling_fwd.mdp.observations import *  # noqa: F401, F403
-from mjlab.tasks.crawling_fwd.mdp.rewards import (  # noqa: F401
-  egocentric_anchor_orientation_error_exp,
-  egocentric_anchor_position_error_exp,
-)
-
-# The unicycle sampler is the jog's, unchanged: arc / pivot / idle with independent vx and wz.
+# The unicycle sampler is the jog's, unchanged: arc / pivot / idle.
 from mjlab.tasks.jog_unicycle.mdp.commands import (  # noqa: F401
   UnicycleMotionCommand,
   UnicycleMotionCommandCfg,
   span_normalized_weights,
 )
-from mjlab.tasks.tracking.mdp.metrics import *  # noqa: F401, F403
-from mjlab.tasks.tracking.mdp.observations import *  # noqa: F401, F403
-from mjlab.tasks.tracking.mdp.rewards import *  # noqa: F401, F403
-from mjlab.tasks.tracking.mdp.terminations import *  # noqa: F401, F403
 
-# Upright twist reward (pelvis YAW heading), the jog's. Not star-importing crawling_fwd.mdp.rewards
-# keeps exactly one ``twist_tracking`` in this namespace.
+# Upright twist reward (pelvis YAW heading) and the twist-gated foot terms, the jog's.
 from mjlab.tasks.jog_unicycle.mdp.rewards import (  # noqa: F401
   feet_slip_twist,
   soft_landing_twist,
   twist_tracking,
 )
 
-# Swing-foot geometry penalties (toe clearance, toe-down pitch), sensor-free: this task's own.
+# Swing-foot geometry penalties (toe clearance, toe-down pitch): this task's own.
 from .rewards import swing_foot_pitch, toe_clearance  # noqa: F401

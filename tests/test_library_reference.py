@@ -15,8 +15,8 @@ from mjlab.scripts.library_to_npz import (
   _rot_z,
   _stride_map,
 )
-from mjlab.tasks.crawling_fwd.mdp.commands import LibraryMotionLoader
-from mjlab.tasks.crawling_fwd_blending.mdp.commands import BlendingMotionCommand
+from mjlab.tasks.gait_library.mdp.blending import BlendingMotionCommand
+from mjlab.tasks.gait_library.mdp.commands import LibraryMotionLoader
 from mjlab.tasks.registry import load_env_cfg
 
 VX, WZ = 1.0, 0.8  # twist of the synthetic arc clips [m/s, rad/s]

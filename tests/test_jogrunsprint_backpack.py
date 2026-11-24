@@ -1,4 +1,4 @@
-"""G1-JogRunSprint-Custom-Backpack: the parent task on the rear-backpack robot."""
+"""G1-JogRunSprint-Unicycle-Backpack: the parent task on the backpack robot."""
 
 import numpy as np
 import pytest
@@ -8,18 +8,17 @@ from mjlab.asset_zoo.robots.unitree_g1 import g1_constants_backpack as bp
 from mjlab.entity import Entity
 from mjlab.tasks.registry import load_env_cfg, load_rl_cfg, load_runner_cls
 
-TASK, PARENT = "G1-JogRunSprint-Custom-Backpack", "G1-JogRunSprint-Custom"
+TASK, PARENT = "G1-JogRunSprint-Unicycle-Backpack", "G1-JogRunSprint-Unicycle"
 
 
-def test_robot_carries_the_rear_backpack() -> None:
+def test_robot_carries_the_backpack() -> None:
   robot = load_env_cfg(TASK).scene.entities["robot"]
-  assert robot.spec_fn is bp.get_rear_backpack_spec
+  assert robot.spec_fn is bp.get_backpack_spec
   model = Entity(robot).spec.compile()
   body = model.body(bp.BACKPACK_BODY_NAME)
   assert model.body(body.parentid[0]).name == "torso_link"
-  # 5 % heavier than the stock backpack and 5 cm further back, nothing else moved.
-  assert body.mass[0] == pytest.approx(1.05 * bp.BACKPACK_MASS) == pytest.approx(1.47)
-  np.testing.assert_allclose(body.pos - np.asarray(bp.BACKPACK_POS), (-0.05, 0, 0))
+  assert body.mass[0] == pytest.approx(1.5)
+  np.testing.assert_allclose(body.pos, (-0.12, 0.0, 0.1775))
   np.testing.assert_allclose(
     model.geom("backpack_collision").size, np.asarray(bp.BACKPACK_SIZE) / 2
   )
